@@ -64,29 +64,32 @@ This vertical slice supports the following entity kinds and minimal behavior:
 
 1. Resource (`iron-ore`)
 - Static map entity/resource node.
-- Can hold extractable ore units (finite or effectively large for slice testing, but behavior must be explicit in implementation).
+- Holds infinite extractable ore for the vertical slice.
 - Does not move items itself.
 
 2. Miner
 - Placeable, directional machine.
-- Extracts `iron-ore` from an adjacent/underlying valid resource rule defined in code and documented there.
-- Produces `iron-ore` output toward its facing direction at a fixed tick interval.
+- Placement rule: must be placed on a tile containing a Resource node.
+- Extracts `iron-ore` from the underlying resource tile.
+- Cycle time: emits one `iron-ore` every `60` ticks (1 second) toward the tile in its facing direction, if output accepts input.
 
 3. Belt
 - Placeable, directional transport.
-- Accepts one or more incoming `iron-ore` items subject to capacity constraints.
-- Moves items forward by belt direction over ticks and outputs to the next valid receiver.
+- Accepts incoming `iron-ore` and `iron-plate` items subject to capacity constraints.
+- Capacity: one item per belt tile for this slice.
+- Moves the current item one tile forward every `15` ticks if the target accepts the transfer.
 
 4. Inserter
 - Placeable, directional transfer arm.
 - Pulls items from its pickup side and deposits to its drop side.
 - Supports `iron-ore` and `iron-plate` transfer in this slice.
+- Cycle time: one transfer attempt every `20` ticks.
 
 5. Furnace
 - Placeable processing machine.
 - Input: `iron-ore`.
 - Output: `iron-plate`.
-- Smelts with a deterministic processing time in ticks.
+- Smelt time: `180` ticks (3 seconds) per plate.
 - No fuel or power consumption in this slice.
 
 6. Chest (optional)
@@ -112,6 +115,7 @@ Keyboard/mouse controls are fixed for the slice:
 
 Notes:
 - Resource nodes are not user-placeable in this slice unless explicitly added later.
+- Resource nodes are not removable via right-click.
 - Chest is optional and not bound to `1-4` in this scope.
 
 ## Deferred Items
