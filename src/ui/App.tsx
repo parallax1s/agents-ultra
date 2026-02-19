@@ -1,3 +1,6 @@
+/// <reference path="../types/react-shim.d.ts" />
+/// <reference path="../types/modules.d.ts" />
+
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import Palette from './palette';
