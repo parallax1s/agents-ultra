@@ -1,4 +1,4 @@
-import type { Direction, EntityBase, EntityKind, GridCoord } from "./types";
+import type { Direction, EntityBase, EntityKind, GridCoord, ItemKind } from "./types";
 
 export type SnapshotGrid = {
   readonly width: number;
@@ -23,6 +23,13 @@ export type SnapshotEntity = {
   readonly pos: GridCoord;
   readonly rot: Direction;
   readonly light?: unknown;
+  readonly items?: ReadonlyArray<ItemKind | null>;
+  readonly hasOutput?: boolean;
+  readonly state?: "idle" | "pickup" | "swing" | "drop";
+  readonly holding?: ItemKind | null;
+  readonly inputOccupied?: boolean;
+  readonly outputOccupied?: boolean;
+  readonly progress01?: number;
 };
 
 export type Snapshot = Readonly<{
@@ -50,6 +57,8 @@ type SnapshotSim = {
   readonly getMap?: () => SnapshotMap;
 };
 
+type SnapshotState = Record<string, unknown>;
+
 const DEFAULT_TILE_SIZE = 32;
 
 const clampCounter = (value: unknown): number => {
@@ -58,6 +67,36 @@ const clampCounter = (value: unknown): number => {
   }
 
   return value < 0 ? 0 : value;
+};
+
+const isObject = (value: unknown): value is SnapshotState => {
+  return value !== null && typeof value === "object";
+};
+
+const isItemKind = (value: unknown): value is ItemKind => {
+  return value === "iron-ore" || value === "iron-plate";
+};
+
+const clampProgress01 = (value: number): number => {
+  if (value <= 0) {
+    return 0;
+  }
+
+  if (value >= 1) {
+    return 1;
+  }
+
+  return value;
+};
+
+const asItemList = (value: unknown): ReadonlyArray<ItemKind | null> | undefined => {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  return value.map((entry) => {
+    return isItemKind(entry) ? entry : null;
+  });
 };
 
 const getSnapshotMap = (sim: SnapshotSim): SnapshotMap | undefined => {
@@ -98,13 +137,166 @@ const extractLightState = (entity: EntityBase): unknown => {
   return undefined;
 };
 
-const createEntitySnapshot = (entity: EntityBase): SnapshotEntity => ({
-  id: entity.id,
-  kind: entity.kind,
-  pos: { x: entity.pos.x, y: entity.pos.y },
-  rot: entity.rot,
-  light: extractLightState(entity),
-});
+const extractBeltItems = (state: SnapshotState | undefined): ReadonlyArray<ItemKind | null> => {
+  if (state === undefined) {
+    return [];
+  }
+
+  const byItems = asItemList(state.items);
+  if (byItems !== undefined) {
+    return byItems;
+  }
+
+  return asItemList(state.slots) ?? [];
+};
+
+const extractMinerHasOutput = (state: SnapshotState | undefined): boolean | undefined => {
+  if (state === undefined) {
+    return undefined;
+  }
+
+  if (typeof state.hasOutput === "boolean") {
+    return state.hasOutput;
+  }
+
+  if ("output" in state) {
+    const output = state.output;
+    if (typeof output === "boolean") {
+      return output;
+    }
+
+    if (isItemKind(output)) {
+      return true;
+    }
+    if (output === null) {
+      return false;
+    }
+  }
+
+  return undefined;
+};
+
+const extractInserterState = (state: SnapshotState | undefined): "idle" | "pickup" | "swing" | "drop" => {
+  if (state === undefined) {
+    return "idle";
+  }
+
+  const rawState = state.state;
+  if (typeof rawState === "number") {
+    if (rawState === 1) {
+      return "pickup";
+    }
+    if (rawState === 2) {
+      return "swing";
+    }
+    if (rawState === 3) {
+      return "drop";
+    }
+    return "idle";
+  }
+
+  if (rawState === "pickup" || rawState === "swing" || rawState === "drop") {
+    return rawState;
+  }
+
+  return "idle";
+};
+
+const extractInserterHolding = (state: SnapshotState | undefined): ItemKind | null => {
+  if (state === undefined) {
+    return null;
+  }
+
+  const candidates = [state.holding, state.carried, state.item];
+  for (const candidate of candidates) {
+    if (isItemKind(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+};
+
+const extractFurnaceBooleanField = (state: SnapshotState | undefined, key: "inputOccupied" | "outputOccupied"): boolean | undefined => {
+  if (state === undefined) {
+    return undefined;
+  }
+
+  const direct = state[key];
+  if (typeof direct === "boolean") {
+    return direct;
+  }
+
+  const legacy = state[key === "inputOccupied" ? "input" : "output"];
+  if (typeof legacy === "boolean") {
+    return legacy;
+  }
+
+  return undefined;
+};
+
+const extractFurnaceProgress = (state: SnapshotState | undefined): number => {
+  if (state === undefined) {
+    return 0;
+  }
+
+  const direct = state.progress01;
+  if (typeof direct === "number" && Number.isFinite(direct)) {
+    return clampProgress01(direct);
+  }
+
+  const rawProgress = state.progress;
+  if (typeof rawProgress === "number" && Number.isFinite(rawProgress)) {
+    return clampProgress01(rawProgress);
+  }
+
+  return 0;
+};
+
+const createEntitySnapshot = (entity: EntityBase): SnapshotEntity => {
+  const entityState = isObject(entity.state) ? entity.state : undefined;
+  const baseSnapshot: SnapshotEntity = {
+    id: entity.id,
+    kind: entity.kind,
+    pos: { x: entity.pos.x, y: entity.pos.y },
+    rot: entity.rot,
+    light: extractLightState(entity),
+  };
+
+  if (entity.kind === "belt") {
+    return {
+      ...baseSnapshot,
+      items: extractBeltItems(entityState),
+    };
+  }
+
+  if (entity.kind === "miner") {
+    const hasOutput = extractMinerHasOutput(entityState);
+    return {
+      ...baseSnapshot,
+      ...(hasOutput === undefined ? {} : { hasOutput }),
+    };
+  }
+
+  if (entity.kind === "inserter") {
+    return {
+      ...baseSnapshot,
+      state: extractInserterState(entityState),
+      holding: extractInserterHolding(entityState),
+    };
+  }
+
+  if (entity.kind === "furnace") {
+    return {
+      ...baseSnapshot,
+      inputOccupied: extractFurnaceBooleanField(entityState, "inputOccupied") ?? false,
+      outputOccupied: extractFurnaceBooleanField(entityState, "outputOccupied") ?? false,
+      progress01: extractFurnaceProgress(entityState),
+    };
+  }
+
+  return baseSnapshot;
+};
 
 export const createSnapshot = (sim: SnapshotSim): Snapshot => {
   const map = getSnapshotMap(sim);
