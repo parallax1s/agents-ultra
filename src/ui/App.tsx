@@ -1,7 +1,7 @@
 /// <reference path="../types/react-shim.d.ts" />
 /// <reference path="../types/modules.d.ts" />
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import Palette from './palette';
 import {
@@ -31,7 +31,9 @@ type PaletteProps = {
   onSelectKind(kind: EntityKind): void;
 };
 
-const PaletteView = Palette as unknown as React.ComponentType<PaletteProps>;
+type PaletteViewComponent = (props: PaletteProps) => ReturnType<typeof Palette>;
+
+const PaletteView = Palette as unknown as PaletteViewComponent;
 
 const HOTKEY_TO_KIND: Readonly<Record<'Digit1' | 'Digit2' | 'Digit3' | 'Digit4', EntityKind>> = {
   Digit1: 'Miner',
@@ -88,12 +90,12 @@ function pointerToTile(event: PointerEvent, canvas: HTMLCanvasElement): Tile | n
   };
 }
 
-export default function App(): React.JSX.Element {
+export default function App() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const controllerRef = useRef<ReturnType<typeof createPlacementController> | null>(null);
   const rendererRef = useRef<RendererApi | null>(null);
-  const [selectedKind, setSelectedKind] = useState<EntityKind | null>(null);
+  const [selectedKind, setSelectedKind] = useState(null as EntityKind | null);
 
   const syncPaletteFromController = useCallback((): void => {
     const controller = controllerRef.current;
