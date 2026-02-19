@@ -1,13 +1,15 @@
 import type { EntityBase, EntityKind } from './types';
 
+export type RegisteredEntityKind = EntityKind | (string & {});
+
 type EntityDefinition = {
   create(init: any, sim: unknown): { state?: unknown } | void;
   update(entity: EntityBase, dtMs: number, sim: unknown): void;
 };
 
-const registry = new Map<EntityKind, EntityDefinition>();
+const registry = new Map<RegisteredEntityKind, EntityDefinition>();
 
-export function registerEntity(kind: EntityKind, def: EntityDefinition): void {
+export function registerEntity(kind: RegisteredEntityKind, def: EntityDefinition): void {
   if (registry.has(kind)) {
     throw new Error(`Entity kind "${String(kind)}" is already registered`);
   }
@@ -15,6 +17,6 @@ export function registerEntity(kind: EntityKind, def: EntityDefinition): void {
   registry.set(kind, def);
 }
 
-export function getDefinition(kind: EntityKind): EntityDefinition | undefined {
+export function getDefinition(kind: RegisteredEntityKind): EntityDefinition | undefined {
   return registry.get(kind);
 }

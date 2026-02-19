@@ -7,18 +7,26 @@ import type {
 } from "./types";
 
 type CreateSimConfig = {
-  width: number;
-  height: number;
-  seed: number | string;
+  width?: number;
+  height?: number;
+  seed?: number | string;
 };
 
 type EntityInit = {
   pos: GridCoord;
-  rot: Direction;
+  rot?: Direction;
 } & Record<string, unknown>;
+
+type EntityDescriptor = {
+  kind: EntityKind | (string & {});
+} & EntityInit;
 
 const TICK_MS = 1000 / 60;
 const STEP_EPSILON = 1e-7;
+const DEFAULT_ROTATION: Direction = "N";
+const DEFAULT_WORLD_WIDTH = 64;
+const DEFAULT_WORLD_HEIGHT = 64;
+const DEFAULT_WORLD_SEED = 0;
 
 const toCellKey = (pos: GridCoord): string => `${pos.x},${pos.y}`;
 
@@ -30,8 +38,55 @@ const isOutOfBounds = (
   return pos.x < 0 || pos.y < 0 || pos.x >= width || pos.y >= height;
 };
 
-export const createSim = ({ width, height, seed }: CreateSimConfig) => {
-  void seed;
+const isGridCoord = (value: unknown): value is GridCoord => {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const candidate = value as { x?: unknown; y?: unknown };
+  return (
+    typeof candidate.x === "number" &&
+    Number.isInteger(candidate.x) &&
+    typeof candidate.y === "number" &&
+    Number.isInteger(candidate.y)
+  );
+};
+
+const isDirection = (value: unknown): value is Direction =>
+  value === "N" || value === "E" || value === "S" || value === "W";
+
+const toEntityDescriptor = (
+  descriptorOrKind: EntityDescriptor | EntityKind | (string & {}),
+  init: EntityInit | undefined,
+): { kind: EntityKind | (string & {}); init: EntityInit } => {
+  if (typeof descriptorOrKind === "string") {
+    if (init === undefined) {
+      throw new Error("addEntity(kind, init) requires an init object");
+    }
+    return { kind: descriptorOrKind, init };
+  }
+
+  if (typeof descriptorOrKind !== "object" || descriptorOrKind === null) {
+    throw new Error("addEntity requires either a kind string or descriptor object");
+  }
+
+  const { kind, ...rest } = descriptorOrKind;
+  return { kind, init: rest };
+};
+
+export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
+  const worldWidth = width ?? DEFAULT_WORLD_WIDTH;
+  const worldHeight = height ?? DEFAULT_WORLD_HEIGHT;
+  const worldSeed = seed ?? DEFAULT_WORLD_SEED;
+
+  if (!Number.isInteger(worldWidth) || worldWidth <= 0) {
+    throw new RangeError("width must be a positive integer");
+  }
+  if (!Number.isInteger(worldHeight) || worldHeight <= 0) {
+    throw new RangeError("height must be a positive integer");
+  }
+
+  void worldSeed;
 
   const entitiesById = new Map<string, EntityBase>();
   const entitiesByCell = new Map<string, Set<string>>();
@@ -86,10 +141,22 @@ export const createSim = ({ width, height, seed }: CreateSimConfig) => {
     cellKeyById.set(id, nextKey);
   };
 
-  const addEntity = (kind: EntityKind, init: EntityInit): string => {
+  const addEntity = (
+    descriptorOrKind: EntityDescriptor | EntityKind | (string & {}),
+    initArg?: EntityInit,
+  ): string => {
+    const { kind, init } = toEntityDescriptor(descriptorOrKind, initArg);
+    if (!isGridCoord(init.pos)) {
+      throw new Error("addEntity init.pos must be an integer GridCoord");
+    }
+    const rot = isDirection(init.rot) ? init.rot : DEFAULT_ROTATION;
     const definition = getDefinition(kind);
     if (definition === undefined) {
       throw new Error(`Unknown entity kind: ${String(kind)}`);
+    }
+
+    if (isOutOfBounds(init.pos, worldWidth, worldHeight)) {
+      throw new RangeError(`Entity position ${init.pos.x},${init.pos.y} is out of bounds`);
     }
 
     const id = String(nextEntityId);
@@ -97,14 +164,14 @@ export const createSim = ({ width, height, seed }: CreateSimConfig) => {
 
     const createdState =
       typeof definition.create === "function"
-        ? definition.create(init, sim)
+        ? definition.create({ ...init, rot }, sim)
         : undefined;
 
     const entity = {
       id,
       kind,
       pos: { ...init.pos },
-      rot: init.rot,
+      rot,
       ...(createdState === undefined ? {} : { state: createdState }),
     } as EntityBase;
 
@@ -129,7 +196,7 @@ export const createSim = ({ width, height, seed }: CreateSimConfig) => {
   };
 
   const getEntitiesAt = (pos: GridCoord): EntityBase[] => {
-    if (isOutOfBounds(pos, width, height)) {
+    if (isOutOfBounds(pos, worldWidth, worldHeight)) {
       return [];
     }
 
@@ -201,6 +268,8 @@ export const createSim = ({ width, height, seed }: CreateSimConfig) => {
   };
 
   const sim = {
+    width: worldWidth,
+    height: worldHeight,
     addEntity,
     removeEntity,
     getEntityById,
