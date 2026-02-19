@@ -13,8 +13,11 @@ The slice is intentionally narrow. It must prioritize a stable simulation loop, 
 - Build/dev server: Vite 5
 - Language: TypeScript with `strict` mode enabled
 - UI framework: React 18
-- Rendering: PixiJS 8
 - Testing: Vitest
+
+### Rendering
+- Primary implementation for this slice: HTML5 Canvas2D via `<canvas>` rendering context.
+- PixiJS 8 is an acceptable future alternative; it is not the required renderer for this slice.
 
 ## Project Structure
 All implementation for this slice must fit this structure:
@@ -33,7 +36,7 @@ src/
     furnace/
     chest/       # optional in this slice; can exist as stub or disabled entity
   ui/
-    renderer/    # PixiJS scene, camera, sprite/layer setup
+    renderer/    # Canvas2D rendering, scene abstraction, and layer/camera coordination
     input/       # keyboard/mouse bindings and action dispatch
     components/  # React UI controls and HUD
 tests/
@@ -48,6 +51,9 @@ Rules:
 ## Simulation
 - Tick rate: fixed `60 TPS` (1 tick = `16.666... ms` simulation time).
 - Update model: fixed-step simulation; rendering may run at display refresh rate but must consume the latest committed sim state.
+- SIM→Renderer contract:
+  - Simulation publishes rendering input through the snapshot adapter in `src/core/snapshot.ts`.
+  - Renderer must consume snapshots on the tick boundary and render from those immutable state snapshots rather than sim internals.
 - World grid:
   - Tile size: `32px x 32px`.
   - Positioning: entities occupy integer tile coordinates.
