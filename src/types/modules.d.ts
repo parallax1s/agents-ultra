@@ -1,8 +1,29 @@
 declare module 'react' {
-  export const useCallback: any;
-  export const useEffect: any;
-  export const useRef: any;
-  export const useState: any;
+  export as namespace React;
+
+  export function useCallback<T extends (...a: any[]) => any>(cb: T, deps: readonly any[]): T;
+  export function useEffect(cb: () => void | (() => void), deps?: readonly any[]): void;
+  export function useMemo<T>(fn: () => T, deps: readonly any[]): T;
+  export function useRef<T>(init: T | null): { current: T | null };
+  export function useState<S>(init: S): [S, (s: S) => void];
+  export const Fragment: any;
+  export const ReactDefault: any;
+  export default ReactDefault;
+
+  declare namespace React {
+    type FC<P = {}> = (props: P & { children?: any }) => any;
+    interface CSSProperties {
+      [k: string]: string | number;
+    }
+  }
+}
+
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      [el: string]: any;
+    }
+  }
 }
 
 declare module 'react-dom/client' {
