@@ -4,7 +4,7 @@
       "id": "tile-map-rendering",
       "title": "Tile Map Rendering",
       "description": "Render a 32px grid world with visible tiles and entity sprites using PixiJS 8, driven by simulation state rather than ad-hoc UI state.",
-      "status": "planned",
+      "status": "complete",
       "acceptanceHints": [
         "Grid aligns to 32px tiles with deterministic tile-to-pixel mapping.",
         "Entities render at correct tile coordinates and facing direction.",
@@ -15,7 +15,7 @@
       "id": "mining",
       "title": "Mining Loop",
       "description": "Allow Miner entities to extract iron-ore from Resource nodes and emit ore toward their facing direction at deterministic tick intervals.",
-      "status": "planned",
+      "status": "complete",
       "acceptanceHints": [
         "Miner only extracts from valid iron-ore resource placement rules.",
         "Output item type is always iron-ore.",
@@ -26,7 +26,7 @@
       "id": "belts",
       "title": "Belt Transport",
       "description": "Move items across directional belts (N/E/S/W) one step at a time under fixed-tick simulation rules.",
-      "status": "planned",
+      "status": "complete",
       "acceptanceHints": [
         "Belts accept items from valid upstream outputs when capacity allows.",
         "Items progress in belt direction and hand off to valid downstream receivers.",
@@ -37,7 +37,7 @@
       "id": "inserters",
       "title": "Inserter Transfer",
       "description": "Support directional inserters that pick up items from one side and drop them on the opposite side for both ore and plate items.",
-      "status": "planned",
+      "status": "complete",
       "acceptanceHints": [
         "Inserter pickup/drop sides obey current orientation.",
         "Inserter can transfer iron-ore and iron-plate.",
@@ -48,7 +48,7 @@
       "id": "furnace-smelting",
       "title": "Furnace Smelting",
       "description": "Implement furnace processing that converts iron-ore input into iron-plate output after a fixed tick-based processing duration.",
-      "status": "planned",
+      "status": "complete",
       "acceptanceHints": [
         "Only iron-ore is accepted as smelt input in this slice.",
         "Output item type is iron-plate.",
@@ -59,7 +59,7 @@
       "id": "ui-placement",
       "title": "UI Placement Controls",
       "description": "Provide keyboard and mouse controls for entity selection, rotation, placement, removal, and pause toggling.",
-      "status": "planned",
+      "status": "complete",
       "acceptanceHints": [
         "Keys 1-4 select Miner, Belt, Inserter, and Furnace respectively.",
         "R rotates placement orientation through N/E/S/W.",
