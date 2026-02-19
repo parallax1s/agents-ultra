@@ -1,6 +1,3 @@
-/// <reference path="../types/react-shim.d.ts" />
-/// <reference path="../types/modules.d.ts" />
-
 import { ALL_ENTITY_KINDS, type EntityKind } from './placement';
 
 type PaletteProps = {
