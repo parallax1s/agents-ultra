@@ -58,6 +58,7 @@ type SnapshotSim = {
 };
 
 type SnapshotState = Record<string, unknown>;
+type SnapshotInserterState = "idle" | "pickup" | "swing" | "drop";
 
 const DEFAULT_TILE_SIZE = 32;
 
@@ -71,6 +72,10 @@ const clampCounter = (value: unknown): number => {
 
 const isObject = (value: unknown): value is SnapshotState => {
   return value !== null && typeof value === "object";
+};
+
+const asSnapshotState = (value: unknown): SnapshotState | undefined => {
+  return isObject(value) ? value : undefined;
 };
 
 const isItemKind = (value: unknown): value is ItemKind => {
@@ -126,12 +131,9 @@ const createOreList = (map: SnapshotMap): ReadonlyArray<Readonly<SnapshotOreCell
 };
 
 const extractLightState = (entity: EntityBase): unknown => {
-  if (
-    entity.state !== undefined &&
-    typeof entity.state === "object" &&
-    "light" in entity.state
-  ) {
-    return (entity.state as { readonly light?: unknown }).light;
+  const state = asSnapshotState(entity.state);
+  if (state !== undefined && "light" in state) {
+    return (state as { readonly light?: unknown }).light;
   }
 
   return undefined;
@@ -176,12 +178,13 @@ const extractMinerHasOutput = (state: SnapshotState | undefined): boolean | unde
   return undefined;
 };
 
-const extractInserterState = (state: SnapshotState | undefined): "idle" | "pickup" | "swing" | "drop" => {
-  if (state === undefined) {
+const extractInserterState = (state: unknown): SnapshotInserterState => {
+  const inserterState = asSnapshotState(state);
+  if (inserterState === undefined) {
     return "idle";
   }
 
-  const rawState = state.state;
+  const rawState = inserterState.state;
   if (typeof rawState === "number") {
     if (rawState === 1) {
       return "pickup";
@@ -254,7 +257,7 @@ const extractFurnaceProgress = (state: SnapshotState | undefined): number => {
 };
 
 const createEntitySnapshot = (entity: EntityBase): SnapshotEntity => {
-  const entityState = isObject(entity.state) ? entity.state : undefined;
+  const entityState = asSnapshotState(entity.state);
   const baseSnapshot: SnapshotEntity = {
     id: entity.id,
     kind: entity.kind,
@@ -281,7 +284,7 @@ const createEntitySnapshot = (entity: EntityBase): SnapshotEntity => {
   if (entity.kind === "inserter") {
     return {
       ...baseSnapshot,
-      state: extractInserterState(entityState),
+      state: extractInserterState(entity.state),
       holding: extractInserterHolding(entityState),
     };
   }
