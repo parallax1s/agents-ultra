@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
-import { Palette } from './palette';
+import Palette from './palette';
 import {
   ALL_ENTITY_KINDS,
   createPlacementController,
