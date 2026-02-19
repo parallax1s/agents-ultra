@@ -4,7 +4,6 @@ import type {
   EntityBase,
   EntityKind,
   GridCoord,
-  Sim,
 } from "./types";
 
 type CreateSimConfig = {
@@ -31,7 +30,7 @@ const isOutOfBounds = (
   return pos.x < 0 || pos.y < 0 || pos.x >= width || pos.y >= height;
 };
 
-export const createSim = ({ width, height, seed }: CreateSimConfig): Sim => {
+export const createSim = ({ width, height, seed }: CreateSimConfig) => {
   void seed;
 
   const entitiesById = new Map<string, EntityBase>();
@@ -201,7 +200,7 @@ export const createSim = ({ width, height, seed }: CreateSimConfig): Sim => {
     }
   };
 
-  const sim: Sim = {
+  const sim = {
     addEntity,
     removeEntity,
     getEntityById,
@@ -212,3 +211,5 @@ export const createSim = ({ width, height, seed }: CreateSimConfig): Sim => {
 
   return sim;
 };
+
+export type Sim = ReturnType<typeof createSim>;
