@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { createMap } from "../src/core/map.ts";
+import { createMap } from "../src/core/map";
 
 function snapshotTiles(width: number, height: number, seed: number | string): string {
   const map = createMap(width, height, seed);
