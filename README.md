@@ -37,6 +37,17 @@ npm run test
 npm run typecheck
 ```
 
+## Optional E2E (Playwright)
+```bash
+npm i -D @playwright/test
+npx playwright install --with-deps
+npm run test:e2e
+```
+
+Notes:
+- `npm run test:e2e` skips automatically when Playwright is not installed.
+- E2E suite uses a Vite dev server on `http://127.0.0.1:4173`.
+
 ## Maintenance Sweep
 Run this quick regression loop before/after gameplay changes:
 ```bash
