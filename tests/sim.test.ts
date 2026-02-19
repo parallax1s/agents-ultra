@@ -1,5 +1,7 @@
 import { getDefinition, registerEntity } from "../src/core/registry";
 import { createSim } from "../src/core/sim";
+import { attachInput } from "../src/ui/input";
+import { rotateDirection, DIRECTION_SEQUENCE, type Direction } from "../src/core/types";
 
 let kindCounter = 0;
 
@@ -44,6 +46,47 @@ const getUpdateCount = (value: unknown): number | undefined => {
 
   const { updates } = state as { updates: unknown };
   return typeof updates === "number" ? updates : undefined;
+};
+
+type Listener = (event: unknown) => void;
+
+const createMockInputStage = () => {
+  const listenerMap: Map<string, Set<Listener>> = new Map();
+
+  const on = (event: string, listener: Listener): void => {
+    const bucket = listenerMap.get(event);
+    if (bucket === undefined) {
+      listenerMap.set(event, new Set([listener]));
+      return;
+    }
+
+    bucket.add(listener);
+  };
+
+  const off = (event: string, listener: Listener): void => {
+    const bucket = listenerMap.get(event);
+    if (bucket === undefined) {
+      return;
+    }
+
+    bucket.delete(listener);
+    if (bucket.size === 0) {
+      listenerMap.delete(event);
+    }
+  };
+
+  const emit = (event: string, payload: unknown): void => {
+    const bucket = listenerMap.get(event);
+    if (bucket === undefined) {
+      return;
+    }
+
+    for (const callback of Array.from(bucket)) {
+      callback(payload);
+    }
+  };
+
+  return { on, off, emit };
 };
 
 describe("simulation registry and loop", () => {
@@ -131,5 +174,59 @@ describe("simulation registry and loop", () => {
     expect(sim.getEntitiesAt(pos).some((entity) => hasEntityId(entity, id))).toBe(false);
 
     expect(sim.removeEntity("does-not-exist")).toBe(false);
+  });
+
+  test("rotates directions in canonical N->E->S->W->N order", () => {
+    const directionSequence: Direction[] = [];
+    let current: Direction = "N";
+
+    for (let i = 0; i < DIRECTION_SEQUENCE.length; i += 1) {
+      directionSequence.push(current);
+      current = rotateDirection(current);
+    }
+
+    directionSequence.push(current);
+    expect(directionSequence).toEqual([...DIRECTION_SEQUENCE, "N"]);
+  });
+
+  test("applies one deterministic rotation step per R key action", () => {
+    const kind = nextKind("miner-rotate-input");
+    registerEntity(kind, {
+      create: () => ({}),
+      update: () => {
+        // no-op
+      },
+    });
+
+    const sim = createSim();
+    const minerId = sim.addEntity({
+      kind,
+      pos: { x: 1, y: 1 },
+      rot: "N",
+    });
+    const entity = sim.getEntityById(minerId) as { rot: Direction };
+
+    const stage = createMockInputStage();
+    const controller = attachInput({
+      app: {},
+      stage,
+      metrics: { tileSize: 16, gridSize: { cols: 8, rows: 8 } },
+    });
+
+    const detachRotate = controller.onRotate(() => {
+      entity.rot = rotateDirection(entity.rot);
+    });
+
+    stage.emit("keydown", { code: "KeyR", repeat: false });
+    stage.emit("keydown", { code: "KeyR", repeat: true });
+    stage.emit("keydown", { key: "r", repeat: false });
+
+    expect(entity.rot).toBe("S");
+
+    detachRotate();
+    stage.emit("keydown", { code: "KeyR", repeat: false });
+    expect(entity.rot).toBe("S");
+
+    controller.destroy();
   });
 });

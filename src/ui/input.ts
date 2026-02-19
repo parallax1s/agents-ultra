@@ -8,6 +8,15 @@ export type InputMetrics = {
   };
 };
 
+type KeyEventName = "keydown";
+
+type KeyEventLike = {
+  code?: string;
+  key?: string;
+  repeat?: boolean;
+  preventDefault?: () => void;
+};
+
 type PointerEventName = "pointermove" | "pointerdown";
 
 type PointerEventLike = {
@@ -19,9 +28,13 @@ type PointerEventLike = {
 
 type PointerListener = (event: PointerEventLike) => void;
 
+type KeyDownListener = (event: KeyEventLike) => void;
+
+type Listener = PointerListener | KeyDownListener;
+
 export type InputStage = {
-  on(event: PointerEventName, listener: PointerListener): unknown;
-  off(event: PointerEventName, listener: PointerListener): unknown;
+  on(event: PointerEventName | KeyEventName, listener: Listener): unknown;
+  off(event: PointerEventName | KeyEventName, listener: Listener): unknown;
 };
 
 export type AttachInputArgs = {
@@ -33,6 +46,7 @@ export type AttachInputArgs = {
 export type InputController = {
   onHover(cb: (coord: GridCoord | null) => void): () => void;
   onClick(cb: (coord: GridCoord) => void): () => void;
+  onRotate(cb: () => void): () => void;
   toGrid(pt: { x: number; y: number }): GridCoord | null;
   destroy(): void;
 };
@@ -52,6 +66,7 @@ export const attachInput = ({ app, stage, metrics }: AttachInputArgs): InputCont
 
   const hoverCallbacks = new Set<(coord: GridCoord | null) => void>();
   const clickCallbacks = new Set<(coord: GridCoord) => void>();
+  const rotateCallbacks = new Set<() => void>();
 
   const toGrid = (pt: { x: number; y: number }): GridCoord | null => {
     const { tileSize, gridSize } = metrics;
@@ -92,8 +107,27 @@ export const attachInput = ({ app, stage, metrics }: AttachInputArgs): InputCont
     }
   };
 
+  const isRotateKey = (event: KeyEventLike): boolean => (
+    event.code === "KeyR" || event.key === "r" || event.key === "R"
+  );
+
+  const handleKeyDown: KeyDownListener = (event) => {
+    if (!isRotateKey(event) || event.repeat === true) {
+      return;
+    }
+
+    for (const callback of rotateCallbacks) {
+      callback();
+    }
+
+    if (typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+  };
+
   stage.on("pointermove", handlePointerMove);
   stage.on("pointerdown", handlePointerDown);
+  stage.on("keydown", handleKeyDown);
 
   const onHover = (cb: (coord: GridCoord | null) => void): (() => void) => {
     hoverCallbacks.add(cb);
@@ -109,16 +143,26 @@ export const attachInput = ({ app, stage, metrics }: AttachInputArgs): InputCont
     };
   };
 
+  const onRotate = (cb: () => void): (() => void) => {
+    rotateCallbacks.add(cb);
+    return () => {
+      rotateCallbacks.delete(cb);
+    };
+  };
+
   const destroy = (): void => {
     stage.off("pointermove", handlePointerMove);
     stage.off("pointerdown", handlePointerDown);
+    stage.off("keydown", handleKeyDown);
     hoverCallbacks.clear();
     clickCallbacks.clear();
+    rotateCallbacks.clear();
   };
 
   return {
     onHover,
     onClick,
+    onRotate,
     toGrid,
     destroy,
   };
