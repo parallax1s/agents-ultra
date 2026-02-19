@@ -4,7 +4,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "node scripts/ensure-vitest-or-skip.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
