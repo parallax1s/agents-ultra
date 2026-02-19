@@ -346,16 +346,24 @@ export function createRenderer(canvas: HTMLCanvasElement): RendererApi {
   let rafId: number | null = null;
   let destroyed = false;
 
+  const readSnapshot = (): Snapshot | null => {
+    const sim = window.__SIM__;
+    if (typeof sim !== "object" || sim === null) {
+      return null;
+    }
+
+    try {
+      return createSnapshot(sim);
+    } catch {
+      return null;
+    }
+  };
+
   const draw = (): void => {
     if (destroyed) return;
 
-    // Get latest snapshot from the global simulation
-    const sim = window.__SIM__ as unknown;
-    const simObj: object = typeof sim === "object" && sim !== null ? (sim as object) : {};
-    let snap: Snapshot;
-    try {
-      snap = createSnapshot(simObj as {});
-    } catch {
+    const snapshot = readSnapshot();
+    if (snapshot === null) {
       // If snapshot fails (e.g., no sim present yet), clear and request next frame
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       scheduleNext();
@@ -365,9 +373,9 @@ export function createRenderer(canvas: HTMLCanvasElement): RendererApi {
     // Canvas clearing
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const gridW = snap.grid.width || 0;
-    const gridH = snap.grid.height || 0;
-    const tile = snap.grid.tileSize || 32;
+    const gridW = snapshot.grid.width || 0;
+    const gridH = snapshot.grid.height || 0;
+    const tile = snapshot.grid.tileSize || 32;
     if (gridW <= 0 || gridH <= 0) {
       scheduleNext();
       return;
@@ -377,19 +385,19 @@ export function createRenderer(canvas: HTMLCanvasElement): RendererApi {
 
     // Layers
     drawGrid(ctx, gridW, gridH, tile, t);
-    drawOre(ctx, snap.ore, t);
+    drawOre(ctx, snapshot.ore, t);
 
     // Entities
-    for (const e of snap.entities) {
+    for (const e of snapshot.entities) {
       switch (e.kind as EntityKind) {
         case "miner":
           drawMiner(ctx, e.pos.x, e.pos.y, e.rot, t);
           break;
         case "belt":
-          drawBelt(ctx, e.pos.x, e.pos.y, e.rot, e.light, t, snap.time.tick);
+          drawBelt(ctx, e.pos.x, e.pos.y, e.rot, e.light, t, snapshot.time.tick);
           break;
         case "inserter":
-          drawInserter(ctx, e.pos.x, e.pos.y, e.rot, e.light, t, snap.time.tick);
+          drawInserter(ctx, e.pos.x, e.pos.y, e.rot, e.light, t, snapshot.time.tick);
           break;
         case "furnace": {
           const progress = parseFurnaceProgress(e.light);

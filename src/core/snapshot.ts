@@ -78,6 +78,32 @@ const asSnapshotState = (value: unknown): SnapshotState | undefined => {
   return isObject(value) ? value : undefined;
 };
 
+const isPlainObject = (value: unknown): value is SnapshotState => {
+  if (!isObject(value)) {
+    return false;
+  }
+
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+};
+
+const cloneSnapshotValue = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map((entry) => cloneSnapshotValue(entry));
+  }
+
+  if (!isPlainObject(value)) {
+    return value;
+  }
+
+  const clone: SnapshotState = {};
+  for (const key of Object.keys(value)) {
+    clone[key] = cloneSnapshotValue(value[key]);
+  }
+
+  return clone;
+};
+
 const isItemKind = (value: unknown): value is ItemKind => {
   return value === "iron-ore" || value === "iron-plate";
 };
@@ -263,7 +289,7 @@ const createEntitySnapshot = (entity: EntityBase): SnapshotEntity => {
     kind: entity.kind,
     pos: { x: entity.pos.x, y: entity.pos.y },
     rot: entity.rot,
-    light: extractLightState(entity),
+    light: cloneSnapshotValue(extractLightState(entity)),
   };
 
   if (entity.kind === "belt") {
