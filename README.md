@@ -37,6 +37,14 @@ npm run test
 npm run typecheck
 ```
 
+## Maintenance Sweep
+Run this quick regression loop before/after gameplay changes:
+```bash
+npm run typecheck
+npm run build
+npm run test
+```
+
 ## Controls
 - `1` / `2` / `3` / `4`: select build slot
 - `R`: rotate selected building orientation
