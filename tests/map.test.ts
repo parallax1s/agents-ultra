@@ -1,5 +1,4 @@
-import assert from "node:assert/strict";
-import { test } from "node:test";
+import { describe, expect, it } from "vitest";
 
 import { createMap } from "../src/core/map";
 
@@ -16,52 +15,52 @@ function snapshotTiles(width: number, height: number, seed: number | string): st
   return output;
 }
 
-test("createMap is deterministic for the same seed", () => {
-  const first = snapshotTiles(64, 64, 1337);
-  const second = snapshotTiles(64, 64, 1337);
+describe("createMap", () => {
+  it("is deterministic for the same seed", () => {
+    const first = snapshotTiles(64, 64, 1337);
+    const second = snapshotTiles(64, 64, 1337);
+    expect(first).toBe(second);
+  });
 
-  assert.equal(first, second);
-});
+  it("differs when using different seeds", () => {
+    const first = snapshotTiles(64, 64, 1337);
+    const second = snapshotTiles(64, 64, 7331);
+    expect(first).not.toBe(second);
+  });
 
-test("createMap differs when using different seeds", () => {
-  const first = snapshotTiles(64, 64, 1337);
-  const second = snapshotTiles(64, 64, 7331);
+  it("keeps the center spawn area ore-free (at least 10x10)", () => {
+    const width = 60;
+    const height = 40;
+    const map = createMap(width, height, 99);
 
-  assert.notEqual(first, second);
-});
+    const spawnWidth = 10;
+    const spawnHeight = 10;
+    const startX = Math.floor((width - spawnWidth) / 2);
+    const startY = Math.floor((height - spawnHeight) / 2);
 
-test("center spawn area remains ore-free (at least 10x10)", () => {
-  const width = 60;
-  const height = 40;
-  const map = createMap(width, height, 99);
-
-  const spawnWidth = 10;
-  const spawnHeight = 10;
-  const startX = Math.floor((width - spawnWidth) / 2);
-  const startY = Math.floor((height - spawnHeight) / 2);
-
-  for (let y = startY; y < startY + spawnHeight; y += 1) {
-    for (let x = startX; x < startX + spawnWidth; x += 1) {
-      assert.equal(map.isOre(x, y), false);
-      assert.equal(map.getTile(x, y), "empty");
+    for (let y = startY; y < startY + spawnHeight; y += 1) {
+      for (let x = startX; x < startX + spawnWidth; x += 1) {
+        expect(map.isOre(x, y)).toBe(false);
+        expect(map.getTile(x, y)).toBe("empty");
+      }
     }
-  }
-});
+  });
 
-test("getTile and isOre handle bounds safely", () => {
-  const map = createMap(20, 20, 123);
+  it("handles bounds and non-integer lookups safely", () => {
+    const map = createMap(20, 20, 123);
 
-  assert.equal(map.getTile(-1, 0), undefined);
-  assert.equal(map.getTile(0, -1), undefined);
-  assert.equal(map.getTile(20, 0), undefined);
-  assert.equal(map.getTile(0, 20), undefined);
-  assert.equal(map.getTile(0.5, 1), undefined);
-  assert.equal(map.getTile(1, 0.5), undefined);
+    expect(map.getTile(-1, 0)).toBeUndefined();
+    expect(map.getTile(0, -1)).toBeUndefined();
+    expect(map.getTile(20, 0)).toBeUndefined();
+    expect(map.getTile(0, 20)).toBeUndefined();
+    expect(map.getTile(0.5, 1)).toBeUndefined();
+    expect(map.getTile(1, 0.5)).toBeUndefined();
 
-  assert.equal(map.isOre(-1, 0), false);
-  assert.equal(map.isOre(0, -1), false);
-  assert.equal(map.isOre(20, 0), false);
-  assert.equal(map.isOre(0, 20), false);
-  assert.equal(map.isOre(0.5, 1), false);
-  assert.equal(map.isOre(1, 0.5), false);
+    expect(map.isOre(-1, 0)).toBe(false);
+    expect(map.isOre(0, -1)).toBe(false);
+    expect(map.isOre(20, 0)).toBe(false);
+    expect(map.isOre(0, 20)).toBe(false);
+    expect(map.isOre(0.5, 1)).toBe(false);
+    expect(map.isOre(1, 0.5)).toBe(false);
+  });
 });
