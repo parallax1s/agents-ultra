@@ -9,5 +9,5 @@
     "moduleResolution": "Bundler",
     "skipLibCheck": true
   },
-  "include": ["src"]
+  "include": ["src", "src/types/**/*.d.ts"]
 }
