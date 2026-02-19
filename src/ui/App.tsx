@@ -12,8 +12,12 @@ import {
   type Simulation,
 } from './placement';
 import { createRenderer } from './renderer';
+import { createMap } from '../core/map';
 
 const TILE_SIZE = 32;
+const WORLD_WIDTH = 60;
+const WORLD_HEIGHT = 40;
+const WORLD_SEED = 'agents-ultra';
 
 type Tile = {
   x: number;
@@ -41,6 +45,145 @@ const HOTKEY_TO_KIND: Readonly<Record<'Digit1' | 'Digit2' | 'Digit3' | 'Digit4',
   Digit3: 'Inserter',
   Digit4: 'Furnace',
 };
+
+type RuntimeDirection = 'N' | 'E' | 'S' | 'W';
+type RuntimeEntityKind = 'miner' | 'belt' | 'inserter' | 'furnace';
+
+type RuntimeEntity = {
+  id: string;
+  kind: RuntimeEntityKind;
+  pos: Tile;
+  rot: RuntimeDirection;
+  state?: Record<string, unknown>;
+};
+
+type RuntimeSimulation = Simulation & {
+  width: number;
+  height: number;
+  tileSize: number;
+  tick: number;
+  tickCount: number;
+  elapsedMs: number;
+  getMap: () => ReturnType<typeof createMap>;
+  getAllEntities: () => RuntimeEntity[];
+  destroy: () => void;
+};
+
+const RUNTIME_KIND: Record<EntityKind, RuntimeEntityKind> = {
+  Miner: 'miner',
+  Belt: 'belt',
+  Inserter: 'inserter',
+  Furnace: 'furnace',
+};
+
+const ROTATION_TO_DIRECTION: Record<Rotation, RuntimeDirection> = {
+  0: 'N',
+  1: 'E',
+  2: 'S',
+  3: 'W',
+};
+
+function createRuntimeSimulation(): RuntimeSimulation {
+  const map = createMap(WORLD_WIDTH, WORLD_HEIGHT, WORLD_SEED);
+  const entities = new Map<string, RuntimeEntity>();
+  const indexByTile = new Map<string, string>();
+  let nextId = 1;
+  let paused = false;
+  let intervalId: number | null = null;
+
+  const toKey = (tile: Tile): string => `${tile.x},${tile.y}`;
+  const inBounds = (tile: Tile): boolean =>
+    tile.x >= 0 && tile.y >= 0 && tile.x < WORLD_WIDTH && tile.y < WORLD_HEIGHT;
+
+  const runtime: RuntimeSimulation = {
+    width: WORLD_WIDTH,
+    height: WORLD_HEIGHT,
+    tileSize: TILE_SIZE,
+    tick: 0,
+    tickCount: 0,
+    elapsedMs: 0,
+
+    getMap: () => map,
+
+    getAllEntities: () => Array.from(entities.values()),
+
+    canPlace(kind, tile, _rotation) {
+      if (!inBounds(tile)) {
+        return false;
+      }
+
+      const tileKey = toKey(tile);
+      if (indexByTile.has(tileKey)) {
+        return false;
+      }
+
+      if (kind === 'Miner') {
+        return map.isOre(tile.x, tile.y);
+      }
+
+      return true;
+    },
+
+    addEntity(kind, tile, rotation) {
+      if (!runtime.canPlace(kind, tile, rotation)) {
+        return;
+      }
+
+      const id = String(nextId++);
+      const rot = ROTATION_TO_DIRECTION[rotation];
+      const runtimeKind = RUNTIME_KIND[kind];
+      const entity: RuntimeEntity = {
+        id,
+        kind: runtimeKind,
+        pos: { x: tile.x, y: tile.y },
+        rot,
+      };
+      entities.set(id, entity);
+      indexByTile.set(toKey(tile), id);
+    },
+
+    removeEntity(tile) {
+      const tileKey = toKey(tile);
+      const id = indexByTile.get(tileKey);
+      if (!id) {
+        return;
+      }
+      indexByTile.delete(tileKey);
+      entities.delete(id);
+    },
+
+    togglePause() {
+      paused = !paused;
+    },
+
+    destroy() {
+      if (intervalId !== null) {
+        window.clearInterval(intervalId);
+        intervalId = null;
+      }
+    },
+  };
+
+  intervalId = window.setInterval(() => {
+    if (paused) {
+      return;
+    }
+    runtime.tick += 1;
+    runtime.tickCount += 1;
+    runtime.elapsedMs += Math.round(1000 / 60);
+  }, 1000 / 60);
+
+  return runtime;
+}
+
+function ensureSimulation(): RuntimeSimulation {
+  if (window.__SIM__ && typeof window.__SIM__ === 'object') {
+    return window.__SIM__ as RuntimeSimulation;
+  }
+  const created = createRuntimeSimulation();
+  window.__SIM__ = created;
+  return created;
+}
 
 const NOOP_SIMULATION: Simulation = {
   canPlace(_kind: EntityKind, _tile: Tile, _rotation: Rotation): boolean {
@@ -72,7 +215,8 @@ function isSimulation(value: unknown): value is Simulation {
 }
 
 function getSimulation(): Simulation {
-  return isSimulation(window.__SIM__) ? window.__SIM__ : NOOP_SIMULATION;
+  const sim = ensureSimulation();
+  return isSimulation(sim) ? sim : NOOP_SIMULATION;
 }
 
 function pointerToTile(event: PointerEvent, canvas: HTMLCanvasElement): Tile | null {
@@ -243,6 +387,17 @@ export default function App() {
       renderer.destroy();
       rendererRef.current = null;
       controllerRef.current = null;
+
+      const maybeRuntime = window.__SIM__;
+      if (
+        maybeRuntime &&
+        typeof maybeRuntime === 'object' &&
+        'destroy' in maybeRuntime &&
+        typeof (maybeRuntime as { destroy?: unknown }).destroy === 'function'
+      ) {
+        (maybeRuntime as { destroy: () => void }).destroy();
+      }
+      delete window.__SIM__;
     };
   }, [syncGhostFromController, syncPaletteFromController]);
 
