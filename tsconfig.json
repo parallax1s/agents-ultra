@@ -9,5 +9,6 @@
     "moduleResolution": "Bundler",
     "skipLibCheck": true
   },
-  "include": ["src", "src/types/**/*.d.ts"]
+  "include": ["src", "src/types/**/*.d.ts"],
+  "files": ["src/types/modules.d.ts", "src/types/react-shim.d.ts"]
 }
