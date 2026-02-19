@@ -10,3 +10,4 @@ Build a browser-playable factory simulation for agent experimentation:
 - Automation graph and throughput metrics
 
 This repository is generated and iterated by AgentSwarm local runs.
+Validation run OK.
