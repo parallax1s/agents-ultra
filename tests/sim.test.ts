@@ -108,6 +108,83 @@ describe("simulation registry and loop", () => {
     expect(getUpdateCount(sim.getEntityById(id))).toBe(steps);
   });
 
+  test("advances only on fixed-step boundaries with fractional frame times", () => {
+    const kind = nextKind("miner-fractional");
+    const tickMs = 1000 / 60;
+    let updateCalls = 0;
+
+    registerEntity(kind, {
+      create: () => ({ updates: 0 }),
+      update: (entity: unknown) => {
+        updateCalls += 1;
+
+        if (typeof entity !== "object" || entity === null || !("state" in entity)) {
+          throw new Error("Unexpected entity shape passed to update");
+        }
+
+        const entityWithState = entity as { state?: { updates?: number } };
+        if (!entityWithState.state) {
+          entityWithState.state = { updates: 0 };
+        }
+
+        const current = entityWithState.state.updates ?? 0;
+        entityWithState.state.updates = current + 1;
+      },
+    });
+
+    const sim = createSim();
+    sim.addEntity({ kind, pos: { x: 0, y: 0 } } as Parameters<typeof sim.addEntity>[0]);
+
+    sim.step(tickMs / 2);
+    expect(updateCalls).toBe(0);
+    sim.step(tickMs / 2);
+    expect(updateCalls).toBe(1);
+
+    sim.step(tickMs / 4);
+    expect(updateCalls).toBe(1);
+    sim.step((tickMs * 3) / 4);
+    expect(updateCalls).toBe(2);
+  });
+
+  test("halts advancement while paused and resumes without dropped or duplicated ticks", () => {
+    const kind = nextKind("miner-pause");
+    const tickMs = 1000 / 60;
+    let updateCalls = 0;
+
+    registerEntity(kind, {
+      create: () => ({ updates: 0 }),
+      update: () => {
+        updateCalls += 1;
+      },
+    });
+
+    const sim = createSim();
+    sim.addEntity({ kind, pos: { x: 2, y: 2 } } as Parameters<typeof sim.addEntity>[0]);
+
+    sim.step(3 * tickMs);
+    expect(updateCalls).toBe(3);
+    expect(sim.tickCount).toBe(3);
+
+    const tickCountBeforePause = sim.tickCount;
+    const elapsedBeforePause = sim.elapsedMs;
+
+    sim.pause();
+    sim.step(10 * tickMs);
+    sim.step(10 * tickMs);
+
+    expect(updateCalls).toBe(3);
+    expect(sim.tickCount).toBe(tickCountBeforePause);
+    expect(sim.elapsedMs).toBe(elapsedBeforePause);
+
+    sim.resume();
+    sim.step(tickMs / 4);
+    expect(sim.tickCount).toBe(tickCountBeforePause);
+    expect(sim.elapsedMs).toBe(elapsedBeforePause);
+    sim.step((tickMs * 3) / 4);
+    expect(sim.tickCount).toBe(tickCountBeforePause + 1);
+    expect(updateCalls).toBe(4);
+  });
+
   test("tracks add/remove bookkeeping and handles missing removals", () => {
     const kind = nextKind("miner-bookkeeping");
 

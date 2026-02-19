@@ -94,6 +94,10 @@ export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
 
   let nextEntityId = 1;
   let accumulatorMs = 0;
+  let paused = false;
+  let tick = 0;
+  let tickCount = 0;
+  let elapsedMs = 0;
 
   const removeFromIndexedCell = (id: string): void => {
     const previousKey = cellKeyById.get(id);
@@ -248,18 +252,31 @@ export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
         indexInCell(id, entity.pos);
       }
     }
+
+    tick += 1;
+    tickCount += 1;
+    elapsedMs += TICK_MS;
   };
 
   const step = (dtMs: number): void => {
+    if (paused) {
+      return;
+    }
+
     if (!Number.isFinite(dtMs) || dtMs <= 0) {
       return;
     }
 
     accumulatorMs += dtMs;
+    const stepsToRun = Math.floor((accumulatorMs + STEP_EPSILON) / TICK_MS);
+    if (stepsToRun <= 0) {
+      return;
+    }
 
-    while (accumulatorMs + STEP_EPSILON >= TICK_MS) {
+    accumulatorMs -= stepsToRun * TICK_MS;
+
+    for (let stepIndex = 0; stepIndex < stepsToRun; stepIndex += 1) {
       runTick();
-      accumulatorMs -= TICK_MS;
     }
 
     if (accumulatorMs < 0 && accumulatorMs > -STEP_EPSILON) {
@@ -270,11 +287,32 @@ export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
   const sim = {
     width: worldWidth,
     height: worldHeight,
+    pause(): void {
+      paused = true;
+    },
+    resume(): void {
+      paused = false;
+    },
+    togglePause(): void {
+      paused = !paused;
+    },
     addEntity,
     removeEntity,
     getEntityById,
     getEntitiesAt,
     getAllEntities,
+    get paused(): boolean {
+      return paused;
+    },
+    get tick(): number {
+      return tick;
+    },
+    get tickCount(): number {
+      return tickCount;
+    },
+    get elapsedMs(): number {
+      return elapsedMs;
+    },
     step,
   };
 
