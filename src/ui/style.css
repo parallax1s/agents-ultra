@@ -1,0 +1,41 @@
+:root {
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  background: #1b1f24;
+  display: grid;
+  place-items: center;
+}
+
+#pixi-container,
+.pixi-container {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at center, #263241 0%, #171b20 72%);
+}
+
+#pixi-container canvas,
+.pixi-container canvas {
+  display: block;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+
+#pixi-container canvas:hover,
+.pixi-container canvas:hover {
+  cursor: crosshair;
+}
