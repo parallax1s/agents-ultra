@@ -1,188 +1,434 @@
-import * as PIXI from "pixi.js";
+/*
+  Canvas2D renderer that consumes simulation snapshots and draws:
+  - Grid and ore tiles
+  - Miners, belts (with direction glyph), inserters (animated arm), furnaces (progress bar)
+  - Belt items as small shapes when exposed by snapshot state
+  - Placement ghost/hover highlight
 
-const DEFAULT_TILE_SIZE = 32;
-const GRID_COLOR = 0x3e4a57;
-const ORE_COLOR = 0xc47f2d;
-const HOVER_COLOR = 0x8be9fd;
-const HOVER_LINE_WIDTH = 2;
+  Designed to match App.tsx usage: createRenderer(canvas) -> { setGhost, resize?, destroy }
+*/
 
-export type GridSize = {
-  cols: number;
-  rows: number;
+import { createSnapshot, type Snapshot } from "../core/snapshot";
+import type { Direction, EntityKind } from "../core/types";
+
+type Tile = { x: number; y: number };
+
+// Colors
+const GRID_COLOR = "#3e4a57";
+const ORE_COLOR = "#c47f2d";
+const GHOST_OK_FILL = "rgba(139, 233, 253, 0.18)"; // cyan-ish
+const GHOST_BAD_FILL = "rgba(255, 99, 99, 0.18)"; // red-ish
+const GHOST_STROKE_OK = "#8be9fd";
+const GHOST_STROKE_BAD = "#ff6b6b";
+const MINER_COLOR = "#66c2a5";
+const BELT_COLOR = "#8da0cb";
+const INSERTER_BASE = "#e78ac3";
+const INSERTER_ARM = "#ffb3de";
+const FURNACE_COLOR = "#fc8d62";
+const ITEM_ORE = "#b0792a";
+const ITEM_PLATE = "#c0c5cf";
+const ITEM_GENERIC = "#d4d4d4";
+
+// Direction helpers
+const dirToAngleRad = (d: Direction): number => {
+  switch (d) {
+    case "N":
+      return -Math.PI / 2;
+    case "E":
+      return 0;
+    case "S":
+      return Math.PI / 2;
+    case "W":
+      return Math.PI;
+    default:
+      return 0;
+  }
 };
 
-export type Coord = {
-  x: number;
-  y: number;
+type Transform = {
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+  tileRender: number; // tileSize * scale
 };
 
-export type RendererInit = {
-  container: HTMLElement;
-  gridSize: GridSize;
-  tileSize?: number;
-};
+function computeTransform(canvas: HTMLCanvasElement, gridWidth: number, gridHeight: number, tileSize: number): Transform {
+  const worldW = gridWidth * tileSize;
+  const worldH = gridHeight * tileSize;
+  const scale = Math.max(0.0001, Math.min(canvas.width / worldW, canvas.height / worldH));
+  const viewW = worldW * scale;
+  const viewH = worldH * scale;
+  const offsetX = Math.floor((canvas.width - viewW) / 2);
+  const offsetY = Math.floor((canvas.height - viewH) / 2);
+  return { scale, offsetX, offsetY, tileRender: tileSize * scale };
+}
 
-export type RendererMetrics = {
-  tileSize: number;
-  gridSize: GridSize;
-};
+function drawGrid(ctx: CanvasRenderingContext2D, gridW: number, gridH: number, tile: number, t: Transform): void {
+  ctx.save();
+  ctx.translate(t.offsetX, t.offsetY);
+  ctx.strokeStyle = GRID_COLOR;
+  ctx.lineWidth = Math.max(1, Math.floor(t.scale));
+  // vertical lines
+  for (let x = 0; x <= gridW; x += 1) {
+    const px = Math.floor(x * t.tileRender) + 0.5;
+    ctx.beginPath();
+    ctx.moveTo(px, 0);
+    ctx.lineTo(px, gridH * t.tileRender);
+    ctx.stroke();
+  }
+  // horizontal lines
+  for (let y = 0; y <= gridH; y += 1) {
+    const py = Math.floor(y * t.tileRender) + 0.5;
+    ctx.beginPath();
+    ctx.moveTo(0, py);
+    ctx.lineTo(gridW * t.tileRender, py);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
 
-export type Renderer = {
-  app: PIXI.Application;
-  stage: PIXI.Container;
-  metrics: RendererMetrics;
-  setOre(ore: ReadonlyArray<Coord>): void;
-  setHover(coord: Coord | null): void;
-  render(): void;
-  getView(): HTMLCanvasElement;
+function fillTile(ctx: CanvasRenderingContext2D, x: number, y: number, color: string, t: Transform): void {
+  ctx.fillStyle = color;
+  ctx.fillRect(
+    Math.floor(t.offsetX + x * t.tileRender) + 1,
+    Math.floor(t.offsetY + y * t.tileRender) + 1,
+    Math.ceil(t.tileRender) - 2,
+    Math.ceil(t.tileRender) - 2,
+  );
+}
+
+function drawOre(ctx: CanvasRenderingContext2D, ore: ReadonlyArray<{ x: number; y: number }>, t: Transform): void {
+  ctx.save();
+  for (const cell of ore) {
+    fillTile(ctx, cell.x, cell.y, ORE_COLOR, t);
+  }
+  ctx.restore();
+}
+
+function drawGhost(ctx: CanvasRenderingContext2D, ghost: { tile: Tile | null; valid: boolean }, t: Transform): void {
+  if (ghost.tile === null) return;
+  const gx = t.offsetX + ghost.tile.x * t.tileRender;
+  const gy = t.offsetY + ghost.tile.y * t.tileRender;
+  ctx.save();
+  ctx.fillStyle = ghost.valid ? GHOST_OK_FILL : GHOST_BAD_FILL;
+  ctx.strokeStyle = ghost.valid ? GHOST_STROKE_OK : GHOST_STROKE_BAD;
+  ctx.lineWidth = Math.max(1, Math.floor(t.scale * 2));
+  ctx.beginPath();
+  ctx.rect(Math.floor(gx) + 0.5, Math.floor(gy) + 0.5, Math.ceil(t.tileRender) - 1, Math.ceil(t.tileRender) - 1);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawMiner(ctx: CanvasRenderingContext2D, x: number, y: number, rot: Direction, t: Transform): void {
+  const cx = t.offsetX + (x + 0.5) * t.tileRender;
+  const cy = t.offsetY + (y + 0.5) * t.tileRender;
+  const r = (t.tileRender * 0.8) / 2;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(dirToAngleRad(rot));
+  ctx.fillStyle = MINER_COLOR;
+  ctx.beginPath();
+  ctx.moveTo(-r, -r);
+  ctx.lineTo(r, 0);
+  ctx.lineTo(-r, r);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawBelt(ctx: CanvasRenderingContext2D, x: number, y: number, rot: Direction, itemHint: unknown, t: Transform, timeTick: number): void {
+  // Base belt body
+  const px = t.offsetX + x * t.tileRender;
+  const py = t.offsetY + y * t.tileRender;
+  const pad = t.tileRender * 0.15;
+  ctx.save();
+  ctx.fillStyle = BELT_COLOR;
+  ctx.fillRect(px + pad, py + pad, t.tileRender - 2 * pad, t.tileRender - 2 * pad);
+
+  // Direction arrow
+  const cx = px + t.tileRender / 2;
+  const cy = py + t.tileRender / 2;
+  ctx.translate(cx, cy);
+  ctx.rotate(dirToAngleRad(rot));
+  ctx.fillStyle = "#2b2f3a";
+  ctx.beginPath();
+  ctx.moveTo(-t.tileRender * 0.18, -t.tileRender * 0.12);
+  ctx.lineTo(t.tileRender * 0.18, 0);
+  ctx.lineTo(-t.tileRender * 0.18, t.tileRender * 0.12);
+  ctx.closePath();
+  ctx.fill();
+
+  // Items on belt (read from light state via parseBeltItems)
+  const items = parseBeltItems(itemHint);
+  const defaultPhase = (timeTick % 15) / 15; // 0..1 fallback motion
+  for (const it of items) {
+    const color = it.kind === "iron-ore" ? ITEM_ORE : it.kind === "iron-plate" ? ITEM_PLATE : ITEM_GENERIC;
+    const phase = Number.isFinite(it.pos) ? it.pos : defaultPhase;
+    const ix = -t.tileRender * 0.25 + phase * (t.tileRender * 0.5);
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(ix, 0, Math.max(2, t.tileRender * 0.08), 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+function drawInserter(ctx: CanvasRenderingContext2D, x: number, y: number, rot: Direction, state: unknown, t: Transform, timeTick: number): void {
+  const baseX = t.offsetX + (x + 0.5) * t.tileRender;
+  const baseY = t.offsetY + (y + 0.5) * t.tileRender;
+  ctx.save();
+  // base
+  ctx.fillStyle = INSERTER_BASE;
+  ctx.beginPath();
+  ctx.arc(baseX, baseY, Math.max(2, t.tileRender * 0.12), 0, Math.PI * 2);
+  ctx.fill();
+
+  // arm rotation: parse from state; fallback to time-based sweep
+  const phase = parseInserterPhase(state, timeTick);
+  const angle = dirToAngleRad(rot) + (phase - 0.5) * Math.PI * 0.75; // +/- 67.5deg around facing
+  const armLen = t.tileRender * 0.42;
+
+  ctx.strokeStyle = INSERTER_ARM;
+  ctx.lineWidth = Math.max(2, t.tileRender * 0.08);
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(baseX, baseY);
+  ctx.lineTo(baseX + Math.cos(angle) * armLen, baseY + Math.sin(angle) * armLen);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawFurnace(ctx: CanvasRenderingContext2D, x: number, y: number, progress: number | null, t: Transform): void {
+  const px = t.offsetX + x * t.tileRender;
+  const py = t.offsetY + y * t.tileRender;
+  ctx.save();
+  // body
+  ctx.fillStyle = FURNACE_COLOR;
+  ctx.fillRect(px + 2, py + 2, Math.ceil(t.tileRender) - 4, Math.ceil(t.tileRender) - 4);
+
+  // progress bar (bottom)
+  const frac = progress !== null ? clamp01(progress) : 0;
+  const barW = (Math.ceil(t.tileRender) - 6) * frac;
+  const barH = Math.max(3, Math.floor(t.tileRender * 0.12));
+  ctx.fillStyle = frac > 0 ? "#ffe082" : "#444";
+  ctx.fillRect(px + 3, py + Math.ceil(t.tileRender) - barH - 3, barW, barH);
+  ctx.restore();
+}
+
+function clamp01(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  if (n < 0) return 0;
+  if (n > 1) return 1;
+  return n;
+}
+
+function getNumeric(value: unknown, min: number, max: number): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    if (value < min) return min;
+    if (value > max) return max;
+    return value;
+  }
+  return null;
+}
+
+type BeltItem = { kind: "iron-ore" | "iron-plate" | "generic"; pos: number };
+
+function parseBeltItems(light: unknown): BeltItem[] {
+  const items: BeltItem[] = [];
+  const push = (kind: string, pos: number | null): void => {
+    const k = kind === "iron-ore" || kind === "iron-plate" ? (kind as BeltItem["kind"]) : "generic";
+    const p = pos === null ? 0.5 : clamp01(pos);
+    items.push({ kind: k, pos: p });
+  };
+
+  if (typeof light === "string") {
+    push(light, 0.5);
+    return items;
+  }
+
+  if (typeof light === "boolean") {
+    if (light) items.push({ kind: "generic", pos: 0.5 });
+    return items;
+  }
+
+  if (typeof light !== "object" || light === null) {
+    return items;
+  }
+
+  const obj = light as Record<string, unknown>;
+
+  if (typeof obj.item === "string") {
+    push(obj.item, typeof obj.pos === "number" ? obj.pos : typeof obj.p === "number" ? obj.p : 0.5);
+    return items;
+  }
+
+  if (Array.isArray(obj.items)) {
+    const arr = obj.items as unknown[];
+    // Shape A: ["iron-ore", "iron-plate"]
+    if (arr.every((v) => typeof v === "string")) {
+      const n = Math.max(1, arr.length);
+      arr.forEach((k, i) => push(k as string, (i + 0.5) / n));
+      return items;
+    }
+    // Shape B: [{ kind: "iron-ore", pos: 0.2 }]
+    for (const v of arr) {
+      if (typeof v === "object" && v !== null) {
+        const it = v as Record<string, unknown>;
+        if (typeof it.kind === "string") {
+          const pos = typeof it.pos === "number" ? it.pos : typeof it.p === "number" ? it.p : null;
+          push(it.kind, pos);
+        }
+      }
+    }
+  }
+
+  // Shape C: { slotIndex, slotCount, slotKind }
+  const idx = typeof obj.slotIndex === "number" ? obj.slotIndex : undefined;
+  const cnt = typeof obj.slotCount === "number" ? obj.slotCount : undefined;
+  if (idx !== undefined && cnt && cnt > 0 && typeof obj.slotKind === "string") {
+    push(obj.slotKind, (idx + 0.5) / cnt);
+  }
+
+  return items;
+}
+
+function parseInserterPhase(light: unknown, tick: number): number {
+  const fallback = (tick % 20) / 20;
+  if (typeof light === "number") return clamp01(light);
+  if (typeof light === "object" && light !== null) {
+    const o = light as Record<string, unknown>;
+    for (const key of ["phase", "t", "progress"]) {
+      const v = o[key];
+      if (typeof v === "number") return clamp01(v);
+    }
+    if (typeof o.angle === "number") {
+      const a = o.angle as number; // radians expected
+      const norm = ((a / (Math.PI * 2)) % 1 + 1) % 1;
+      return norm;
+    }
+  }
+  return fallback;
+}
+
+function parseFurnaceProgress(light: unknown): number | null {
+  if (typeof light === "number") return clamp01(light);
+  if (typeof light === "object" && light !== null) {
+    const o = light as Record<string, unknown>;
+    for (const key of ["progress", "t", "ratio"]) {
+      const v = o[key];
+      if (typeof v === "number") return clamp01(v);
+    }
+  }
+  return null;
+}
+
+type RendererApi = {
+  setGhost(tile: Tile | null, valid: boolean): void;
+  resize?(width: number, height: number): void;
   destroy(): void;
 };
 
-function isInBounds(coord: Coord, gridSize: GridSize): boolean {
-  return (
-    coord.x >= 0 &&
-    coord.y >= 0 &&
-    coord.x < gridSize.cols &&
-    coord.y < gridSize.rows
-  );
-}
-
-function drawGridLayer(
-  gridGraphics: PIXI.Graphics,
-  tileSize: number,
-  gridSize: GridSize,
-  resolution: number,
-): void {
-  const lineWidth = 1 / resolution;
-  const lineOffset = lineWidth / 2;
-
-  gridGraphics.clear();
-  gridGraphics.lineStyle({ color: GRID_COLOR, width: lineWidth, alignment: 0.5 });
-
-  for (let col = 0; col <= gridSize.cols; col += 1) {
-    const x = col * tileSize + lineOffset;
-    gridGraphics.moveTo(x, 0);
-    gridGraphics.lineTo(x, gridSize.rows * tileSize);
-  }
-
-  for (let row = 0; row <= gridSize.rows; row += 1) {
-    const y = row * tileSize + lineOffset;
-    gridGraphics.moveTo(0, y);
-    gridGraphics.lineTo(gridSize.cols * tileSize, y);
+declare global {
+  interface Window {
+    __SIM__?: unknown;
   }
 }
 
-function drawOreLayer(
-  oreGraphics: PIXI.Graphics,
-  oreCoords: ReadonlyArray<Coord>,
-  tileSize: number,
-): void {
-  oreGraphics.clear();
-  oreGraphics.beginFill(ORE_COLOR);
-  for (const ore of oreCoords) {
-    oreGraphics.drawRect(ore.x * tileSize, ore.y * tileSize, tileSize, tileSize);
-  }
-  oreGraphics.endFill();
-}
-
-function drawHoverLayer(
-  hoverGraphics: PIXI.Graphics,
-  hoverCoord: Coord | null,
-  tileSize: number,
-  resolution: number,
-): void {
-  const hoverLineWidth = HOVER_LINE_WIDTH / resolution;
-  const hoverInset = hoverLineWidth / 2;
-
-  hoverGraphics.clear();
-  if (hoverCoord === null) {
-    return;
+export function createRenderer(canvas: HTMLCanvasElement): RendererApi {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    throw new Error("2D canvas context unavailable");
   }
 
-  hoverGraphics.lineStyle({ color: HOVER_COLOR, width: hoverLineWidth, alignment: 0.5 });
-  hoverGraphics.drawRect(
-    hoverCoord.x * tileSize + hoverInset,
-    hoverCoord.y * tileSize + hoverInset,
-    tileSize - hoverLineWidth,
-    tileSize - hoverLineWidth,
-  );
-}
+  let ghost: { tile: Tile | null; valid: boolean } = { tile: null, valid: false };
+  let rafId: number | null = null;
+  let destroyed = false;
 
-export function createRenderer(init: RendererInit): Renderer {
-  const tileSize = init.tileSize ?? DEFAULT_TILE_SIZE;
-  const gridSize: GridSize = { cols: init.gridSize.cols, rows: init.gridSize.rows };
-  const resolution =
-    typeof window !== "undefined" && window.devicePixelRatio > 0
-      ? window.devicePixelRatio
-      : 1;
+  const draw = (): void => {
+    if (destroyed) return;
 
-  const app = new PIXI.Application({
-    width: gridSize.cols * tileSize,
-    height: gridSize.rows * tileSize,
-    resolution,
-    autoDensity: true,
-    antialias: false,
-    autoStart: false,
-    backgroundAlpha: 0,
-  });
+    // Get latest snapshot from the global simulation
+    const sim = window.__SIM__ as unknown;
+    const simObj: object = typeof sim === "object" && sim !== null ? (sim as object) : {};
+    let snap: Snapshot;
+    try {
+      snap = createSnapshot(simObj as {});
+    } catch {
+      // If snapshot fails (e.g., no sim present yet), clear and request next frame
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      scheduleNext();
+      return;
+    }
 
-  const view = app.view as HTMLCanvasElement;
-  init.container.appendChild(view);
+    // Canvas clearing
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  const stage = app.stage;
-  const gridLayer = new PIXI.Graphics();
-  const oreLayer = new PIXI.Graphics();
-  const hoverLayer = new PIXI.Graphics();
+    const gridW = snap.grid.width || 0;
+    const gridH = snap.grid.height || 0;
+    const tile = snap.grid.tileSize || 32;
+    if (gridW <= 0 || gridH <= 0) {
+      scheduleNext();
+      return;
+    }
 
-  stage.addChild(gridLayer);
-  stage.addChild(oreLayer);
-  stage.addChild(hoverLayer);
+    const t = computeTransform(canvas, gridW, gridH, tile);
 
-  let oreCoords: Coord[] = [];
-  let hoverCoord: Coord | null = null;
+    // Layers
+    drawGrid(ctx, gridW, gridH, tile, t);
+    drawOre(ctx, snap.ore, t);
 
-  let oreDirty = true;
-  let hoverDirty = true;
+    // Entities
+    for (const e of snap.entities) {
+      switch (e.kind as EntityKind) {
+        case "miner":
+          drawMiner(ctx, e.pos.x, e.pos.y, e.rot, t);
+          break;
+        case "belt":
+          drawBelt(ctx, e.pos.x, e.pos.y, e.rot, e.light, t, snap.time.tick);
+          break;
+        case "inserter":
+          drawInserter(ctx, e.pos.x, e.pos.y, e.rot, e.light, t, snap.time.tick);
+          break;
+        case "furnace": {
+          const progress = parseFurnaceProgress(e.light);
+          drawFurnace(ctx, e.pos.x, e.pos.y, progress, t);
+          break;
+        }
+        default:
+          // resource/chest/unknown: skip
+          break;
+      }
+    }
 
-  drawGridLayer(gridLayer, tileSize, gridSize, resolution);
+    // Ghost highlight on top
+    drawGhost(ctx, ghost, t);
 
-  const metrics: RendererMetrics = {
-    tileSize,
-    gridSize,
+    scheduleNext();
   };
 
-  return {
-    app,
-    stage,
-    metrics,
-    setOre(ore: ReadonlyArray<Coord>): void {
-      oreCoords = ore.filter((coord) => isInBounds(coord, gridSize));
-      oreDirty = true;
-    },
-    setHover(coord: Coord | null): void {
-      hoverCoord = coord !== null && isInBounds(coord, gridSize) ? coord : null;
-      hoverDirty = true;
-    },
-    render(): void {
-      if (oreDirty) {
-        drawOreLayer(oreLayer, oreCoords, tileSize);
-        oreDirty = false;
-      }
-      if (hoverDirty) {
-        drawHoverLayer(hoverLayer, hoverCoord, tileSize, resolution);
-        hoverDirty = false;
-      }
+  const scheduleNext = (): void => {
+    if (destroyed) return;
+    rafId = window.requestAnimationFrame(draw);
+  };
 
-      app.render();
+  // Kick off loop
+  scheduleNext();
+
+  return {
+    setGhost(tile: Tile | null, valid: boolean): void {
+      ghost = { tile, valid };
     },
-    getView(): HTMLCanvasElement {
-      return view;
+    resize(): void {
+      // Nothing to do here; draw() reads canvas size each frame.
     },
     destroy(): void {
-      if (view.parentElement === init.container) {
-        init.container.removeChild(view);
+      destroyed = true;
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
       }
-      app.destroy(true, { children: true });
     },
   };
 }
