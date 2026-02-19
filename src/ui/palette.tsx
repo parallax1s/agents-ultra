@@ -40,3 +40,5 @@ export default function Palette({
     </div>
   );
 }
+
+export { default as Palette } from './palette';
