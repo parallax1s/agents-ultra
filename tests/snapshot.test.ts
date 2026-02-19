@@ -126,6 +126,26 @@ const ensureFurnaceDefinition = (): void => {
   });
 };
 
+const ensureSnapshotProbeDefinition = (): void => {
+  if (getDefinition("snapshot-probe") !== undefined) {
+    return;
+  }
+
+  registerEntity("snapshot-probe", {
+    create: () => ({
+      light: {
+        label: "from-sim",
+        nested: {
+          value: 1,
+        },
+      },
+    }),
+    update: () => {
+      return;
+    },
+  });
+};
+
 const progress = (sim: SnapshotTestSim, ticks: number): void => {
   for (let i = 0; i < ticks; i += 1) {
     sim.step(TICK_MS);
@@ -297,6 +317,88 @@ describe("createSnapshot", () => {
       progress01: 1,
       outputOccupied: true,
     });
+  });
+
+  it("provides immutable snapshot-facing objects that cannot affect simulation state", () => {
+    ensureSnapshotProbeDefinition();
+
+    const sim = createSim({ width: 12, height: 8, seed: 77 });
+    sim.addEntity({
+      kind: "snapshot-probe",
+      pos: { x: 1, y: 1 },
+      rot: "N",
+    });
+
+    const snapshotInput = {
+      ...sim,
+      width: 12,
+      height: 8,
+      tileSize: 16,
+    };
+
+    const firstRead = createSnapshot(snapshotInput);
+    const secondRead = createSnapshot(snapshotInput);
+    const snapshotEntity = firstRead.entities[0];
+
+    const mutableLight = snapshotEntity.light as {
+      label: string;
+      nested: {
+        value: number;
+      };
+    };
+    mutableLight.label = "renderer-mutation";
+    mutableLight.nested.value = 99;
+
+    const simulatedState = sim.getAllEntities()[0]?.state as
+      | {
+          light: {
+            label: string;
+            nested: {
+              value: number;
+            };
+          };
+        }
+      | undefined;
+    expect(simulatedState?.light).toEqual({
+      label: "from-sim",
+      nested: {
+        value: 1,
+      },
+    });
+
+    const afterMutation = createSnapshot(snapshotInput);
+    expect(afterMutation.entities[0].light).toEqual(secondRead.entities[0].light);
+    expect(afterMutation.entities[0]).toEqual(secondRead.entities[0]);
+  });
+
+  it("keeps same-tick snapshot reads repeatable when renderer mutates returned data", () => {
+    ensureBeltDefinition();
+
+    const sim = createSim({ width: 12, height: 8, seed: 88 });
+    sim.addEntity({
+      kind: "belt",
+      pos: { x: 1, y: 1 },
+      rot: "E",
+    });
+
+    const snapshotInput = {
+      ...sim,
+      width: 12,
+      height: 8,
+      tileSize: 16,
+    };
+    const firstRenderRead = createSnapshot(snapshotInput);
+    const baseline = createSnapshot(snapshotInput);
+
+    const renderedItems = firstRenderRead.entities[0] as {
+      items: Array<ItemKind | null>;
+    };
+    renderedItems.items[0] = "iron-plate";
+    renderedItems.items.push("iron-ore");
+
+    const secondRenderRead = createSnapshot(snapshotInput);
+    expect(secondRenderRead).toEqual(baseline);
+    expect(secondRenderRead.entities[0].items).toEqual(baseline.entities[0].items);
   });
 
   it("replays deterministic display data for a fixed tick sequence", () => {
