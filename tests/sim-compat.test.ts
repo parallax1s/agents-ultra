@@ -362,12 +362,15 @@ describe("sim API compatibility", () => {
 
       sim.step(TICK_MS / 2);
       expect((sim.getEntityById(id)?.state as { ticks?: number } | undefined)?.ticks).toBe(0);
+      expect(sim.tickCount).toBe(0);
 
       sim.step(TICK_MS / 2);
       expect((sim.getEntityById(id)?.state as { ticks?: number } | undefined)?.ticks).toBe(1);
+      expect(sim.tickCount).toBe(1);
 
       sim.step(TICK_MS * 2 + TICK_MS / 2);
       expect((sim.getEntityById(id)?.state as { ticks?: number } | undefined)?.ticks).toBe(3);
+      expect(sim.tickCount).toBe(3);
 
       return {
         updates: (sim.getEntityById(id)?.state as { ticks?: number } | undefined)?.ticks ?? 0,
@@ -392,25 +395,27 @@ describe("sim API compatibility", () => {
 
     const id = sim.addEntity(COMPAT_KIND, { pos: { x: 2, y: 2 } });
 
-    sim.step(TICK_MS * 2 + TICK_MS / 2);
-    expect((sim.getEntityById(id)?.state as { ticks?: number } | undefined)?.ticks).toBe(2);
+    sim.step(TICK_MS * 3);
+    expect((sim.getEntityById(id)?.state as { ticks?: number } | undefined)?.ticks).toBe(3);
+    expect(sim.tickCount).toBe(3);
+    expect(sim.elapsedMs).toBeCloseTo(3 * TICK_MS);
     const pausedTickCount = sim.tickCount;
     const pausedElapsedMs = sim.elapsedMs;
     const pausedStateTicks = (sim.getEntityById(id)?.state as { ticks?: number } | undefined)?.ticks;
 
     sim.pause();
-    sim.step(TICK_MS * 3);
-    sim.step(TICK_MS / 2);
+    sim.step(TICK_MS * 10);
+    sim.step(TICK_MS * 10);
     expect(sim.tickCount).toBe(pausedTickCount);
     expect(sim.elapsedMs).toBe(pausedElapsedMs);
     expect((sim.getEntityById(id)?.state as { ticks?: number } | undefined)?.ticks).toBe(pausedStateTicks);
 
     sim.resume();
-    sim.step(TICK_MS / 2);
+    sim.step(TICK_MS / 4);
     expect(sim.tickCount).toBe(pausedTickCount);
     expect((sim.getEntityById(id)?.state as { ticks?: number } | undefined)?.ticks).toBe(pausedStateTicks);
 
-    sim.step(TICK_MS / 2 + TICK_MS);
+    sim.step((TICK_MS * 3) / 4);
     expect(sim.tickCount).toBe(pausedTickCount + 1);
     expect((sim.getEntityById(id)?.state as { ticks?: number } | undefined)?.ticks).toBe(pausedTickCount + 1);
   });
