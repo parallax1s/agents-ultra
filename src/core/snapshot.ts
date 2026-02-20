@@ -282,6 +282,26 @@ const extractFurnaceProgress = (state: SnapshotState | undefined): number => {
   return 0;
 };
 
+const deepFreezeSnapshot = (value: unknown): void => {
+  if (!isObject(value) || Object.isFrozen(value)) {
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      deepFreezeSnapshot(item);
+    }
+    Object.freeze(value);
+    return;
+  }
+
+  for (const key of Object.keys(value)) {
+    deepFreezeSnapshot((value as SnapshotState)[key]);
+  }
+
+  Object.freeze(value);
+};
+
 const createEntitySnapshot = (entity: EntityBase): SnapshotEntity => {
   const entityState = asSnapshotState(entity.state);
   const baseSnapshot: SnapshotEntity = {
@@ -341,7 +361,7 @@ export const createSnapshot = (sim: SnapshotSim): Snapshot => {
   const ore = map === undefined ? [] : createOreList(map);
   const entities = sim.getAllEntities?.() ?? [];
 
-  return {
+  const snapshot: Snapshot = {
     grid: {
       width,
       height,
@@ -355,4 +375,7 @@ export const createSnapshot = (sim: SnapshotSim): Snapshot => {
     ore,
     entities: entities.map(createEntitySnapshot),
   };
+
+  deepFreezeSnapshot(snapshot);
+  return snapshot;
 };

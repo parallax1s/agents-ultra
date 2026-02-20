@@ -339,15 +339,25 @@ describe("createSnapshot", () => {
     const firstRead = createSnapshot(snapshotInput);
     const secondRead = createSnapshot(snapshotInput);
     const snapshotEntity = firstRead.entities[0];
-
-    const mutableLight = snapshotEntity.light as {
+    const snapshotLight = snapshotEntity.light as {
       label: string;
       nested: {
         value: number;
       };
     };
-    mutableLight.label = "renderer-mutation";
-    mutableLight.nested.value = 99;
+    expect(Object.isFrozen(firstRead)).toBe(true);
+    expect(Object.isFrozen(firstRead.entities)).toBe(true);
+    expect(Object.isFrozen(snapshotEntity)).toBe(true);
+    expect(Object.isFrozen(snapshotLight)).toBe(true);
+    expect(Object.isFrozen(snapshotLight.nested)).toBe(true);
+
+    expect(() => {
+      snapshotLight.label = "renderer-mutation";
+    }).toThrow();
+
+    expect(() => {
+      snapshotLight.nested.value = 99;
+    }).toThrow();
 
     const simulatedState = sim.getAllEntities()[0]?.state as
       | {
@@ -389,12 +399,19 @@ describe("createSnapshot", () => {
     };
     const firstRenderRead = createSnapshot(snapshotInput);
     const baseline = createSnapshot(snapshotInput);
-
     const renderedItems = firstRenderRead.entities[0] as {
-      items: Array<ItemKind | null>;
+      items: ReadonlyArray<ItemKind | null>;
     };
-    renderedItems.items[0] = "iron-plate";
-    renderedItems.items.push("iron-ore");
+    expect(Object.isFrozen(firstRenderRead)).toBe(true);
+    expect(Object.isFrozen(firstRenderRead.entities)).toBe(true);
+    expect(Object.isFrozen(renderedItems)).toBe(true);
+
+    expect(() => {
+      renderedItems[0] = "iron-plate";
+    }).toThrow();
+    expect(() => {
+      (renderedItems as unknown as ItemKind[]).push("iron-ore");
+    }).toThrow();
 
     const secondRenderRead = createSnapshot(snapshotInput);
     expect(secondRenderRead).toEqual(baseline);
