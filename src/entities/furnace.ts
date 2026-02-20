@@ -42,21 +42,41 @@ export class Furnace {
     return provided;
   }
 
+  private tryStartCrafting(): void {
+    if (this.crafting || this.input === null || this.output !== null) {
+      return;
+    }
+
+    const recipe = getRecipeForInput(this.input);
+    if (recipe === undefined) {
+      return;
+    }
+
+    this.recipeOutput = recipe.output;
+    this.crafting = true;
+    this.smeltProgressTicks = 0;
+    this.input = null;
+  }
+
+  private hasReachedCompletionBoundary(): boolean {
+    return this.smeltProgressTicks >= FURNACE_SMELT_TICKS;
+  }
+
+  private resetCraftingState(): void {
+    this.crafting = false;
+    this.smeltProgressTicks = 0;
+    this.recipeOutput = null;
+  }
+
   update(_nowMs: number = 0): void {
     if (!this.crafting) {
-      if (this.input === null || this.output !== null) {
-        return;
-      }
+      this.tryStartCrafting();
+      return;
+    }
 
-      const recipe = getRecipeForInput(this.input);
-      if (recipe === undefined) {
-        return;
-      }
+    this.smeltProgressTicks = Math.min(this.smeltProgressTicks + 1, FURNACE_SMELT_TICKS);
 
-      this.recipeOutput = recipe.output;
-      this.crafting = true;
-      this.smeltProgressTicks = 0;
-      this.input = null;
+    if (!this.hasReachedCompletionBoundary()) {
       return;
     }
 
@@ -64,16 +84,13 @@ export class Furnace {
       return;
     }
 
-    this.smeltProgressTicks = Math.min(this.smeltProgressTicks + 1, FURNACE_SMELT_TICKS);
-
-    if (this.smeltProgressTicks !== FURNACE_SMELT_TICKS) {
+    const completedOutput = this.recipeOutput;
+    this.resetCraftingState();
+    if (completedOutput === null) {
       return;
     }
 
-    this.output = this.recipeOutput ?? null;
-    this.crafting = false;
-    this.smeltProgressTicks = 0;
-    this.recipeOutput = null;
+    this.output = completedOutput;
   }
 
   get inputOccupied(): boolean {
