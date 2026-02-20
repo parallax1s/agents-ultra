@@ -10,27 +10,31 @@ const localVitestBinary = resolve(
   process.platform === 'win32' ? 'vitest.cmd' : 'vitest',
 );
 
+const args = new Set(process.argv.slice(2));
+const skipIfMissing =
+  args.has('--skip') || args.has('--skip-if-missing') || process.env.VITEST_SKIP_IF_MISSING === '1';
+const strictMode = args.has('--strict') || !skipIfMissing;
+
 if (!existsSync(localVitestBinary)) {
-  console.log('Vitest not found; skipping tests in offline environment. Install dev deps to run tests.');
-  console.log('npm i -D vitest @vitest/coverage-v8 jsdom');
-  process.exit(0);
+  if (skipIfMissing) {
+    if (strictMode) {
+      console.error('Vitest is required to run tests in strict mode.');
+      console.error('Install with: npm i -D vitest @vitest/coverage-v8 jsdom');
+      process.exit(1);
+    }
+
+    console.log('Skipping tests: Vitest binary not found.');
+    console.log('Install with: npm i -D vitest @vitest/coverage-v8 jsdom');
+    process.exit(0);
+  }
+  console.error('Vitest is required to run tests in strict mode.');
+  console.error('Install with: npm i -D vitest @vitest/coverage-v8 jsdom');
+  process.exit(1);
 }
 
 const result = spawnSync(localVitestBinary, ['run'], {
-  stdio: 'pipe',
-  encoding: 'utf8',
+  stdio: 'inherit',
 });
-
-const stdout = result.stdout || '';
-const stderr = result.stderr || '';
-
-if (stdout) {
-  process.stdout.write(stdout);
-}
-
-if (stderr) {
-  process.stderr.write(stderr);
-}
 
 if (result.error) {
   throw result.error;
