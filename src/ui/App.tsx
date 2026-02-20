@@ -77,6 +77,11 @@ type RuntimeSimulation = Simulation & {
   destroy: () => void;
 };
 
+type Feedback = {
+  kind: 'success' | 'error';
+  message: string;
+};
+
 const RUNTIME_KIND: Record<EntityKind, RuntimeEntityKind> = {
   Miner: 'miner',
   Belt: 'belt',
@@ -122,6 +127,18 @@ function createRuntimeSimulation(): RuntimeSimulation {
           elapsedMs: runtime.elapsedMs,
           entityCount: entities.size,
         };
+      },
+
+      canRemove(tile) {
+        return indexByTile.has(toKey(tile));
+      },
+
+      hasEntityAt(tile) {
+        return indexByTile.has(toKey(tile));
+      },
+
+      isResourceTile(tile) {
+        return map.isOre(tile.x, tile.y);
       },
 
       canPlace(kind, tile, _rotation) {
@@ -191,6 +208,35 @@ function createRuntimeSimulation(): RuntimeSimulation {
   }, 1000 / 60);
 
   return runtime;
+}
+
+function getPlacementEntityCount(sim: Simulation): number | null {
+  const snapshot = (sim as { getPlacementSnapshot?: () => { entityCount: number } }).getPlacementSnapshot;
+  if (typeof snapshot !== 'function') {
+    return null;
+  }
+
+  const value = snapshot.call(sim);
+  return typeof value?.entityCount === 'number' ? value.entityCount : null;
+}
+
+function getCanRemoveOutcome(sim: Simulation, tile: Tile): boolean {
+  if (typeof sim.canRemove === 'function') {
+    return sim.canRemove(tile);
+  }
+
+  const hasEntityAt = (sim as { hasEntityAt?: (tile: Tile) => boolean }).hasEntityAt;
+  if (typeof hasEntityAt === 'function') {
+    return hasEntityAt(tile);
+  }
+
+  return false;
+}
+
+function describeKindOrTarget(kind: EntityKind | null, tile: Tile | null): string {
+  const prefix = kind === null ? 'Selection' : kind;
+  const suffix = tile === null ? '' : ` at (${tile.x}, ${tile.y})`;
+  return `${prefix}${suffix}`;
 }
 
 function ensureSimulation(): RuntimeSimulation {
@@ -283,7 +329,9 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const controllerRef = useRef<ReturnType<typeof createPlacementController> | null>(null);
   const rendererRef = useRef<RendererApi | null>(null);
+  const feedbackTimeoutRef = useRef<number | null>(null);
   const [selectedKind, setSelectedKind] = useState(null as EntityKind | null);
+  const [feedback, setFeedback] = useState<Feedback | null>(null);
 
   const syncPaletteFromController = useCallback((): void => {
     const controller = controllerRef.current;
@@ -304,6 +352,24 @@ export default function App() {
 
     const ghost = controller.getGhost();
     renderer.setGhost(ghost.tile, ghost.valid);
+  }, []);
+
+  const setFeedbackMessage = useCallback((nextFeedback: Feedback | null): void => {
+    if (feedbackTimeoutRef.current !== null) {
+      window.clearTimeout(feedbackTimeoutRef.current);
+      feedbackTimeoutRef.current = null;
+    }
+
+    if (nextFeedback === null) {
+      setFeedback(null);
+      return;
+    }
+
+    setFeedback(nextFeedback);
+    feedbackTimeoutRef.current = window.setTimeout((): void => {
+      setFeedback(null);
+      feedbackTimeoutRef.current = null;
+    }, 1400);
   }, []);
 
   const onPaletteSelect = useCallback(
@@ -372,14 +438,78 @@ export default function App() {
 
     const onMouseDown = (event: MouseEvent): void => {
       if (event.button === 0) {
+        const controllerState = controller.getState();
+        const tile = controllerState.cursor;
+        const initialCount = getPlacementEntityCount(sim);
+
+        if (controllerState.selectedKind === null || tile === null) {
+          setFeedbackMessage({
+            kind: 'error',
+            message: `Unable to place ${describeKindOrTarget(controllerState.selectedKind, tile)}.`,
+          });
+          return;
+        }
+
+        if (!controllerState.canPlace) {
+          setFeedbackMessage({
+            kind: 'error',
+            message: `Placement blocked for ${describeKindOrTarget(controllerState.selectedKind, tile)}.`,
+          });
+          return;
+        }
+
         controller.clickLMB();
+        const nextCount = getPlacementEntityCount(sim);
+        if (initialCount !== null && nextCount !== null && nextCount <= initialCount) {
+          setFeedbackMessage({
+            kind: 'error',
+            message: `Failed to place ${describeKindOrTarget(controllerState.selectedKind, tile)}.`,
+          });
+        } else {
+          setFeedbackMessage({
+            kind: 'success',
+            message: `Placed ${controllerState.selectedKind} at (${tile.x}, ${tile.y}).`,
+          });
+        }
         syncFromController();
         return;
       }
 
       if (event.button === 2) {
         event.preventDefault();
+        const controllerState = controller.getState();
+        const tile = controllerState.cursor;
+        const initialCount = getPlacementEntityCount(sim);
+
+        if (tile === null) {
+          setFeedbackMessage({
+            kind: 'error',
+            message: 'No tile targeted for removal.',
+          });
+          return;
+        }
+
+        if (!getCanRemoveOutcome(sim, tile)) {
+          setFeedbackMessage({
+            kind: 'error',
+            message: `Nothing to remove at (${tile.x}, ${tile.y}).`,
+          });
+          return;
+        }
+
         controller.clickRMB();
+        const nextCount = getPlacementEntityCount(sim);
+        if (initialCount !== null && nextCount !== null && nextCount >= initialCount) {
+          setFeedbackMessage({
+            kind: 'error',
+            message: `Failed to remove at (${tile.x}, ${tile.y}).`,
+          });
+        } else {
+          setFeedbackMessage({
+            kind: 'success',
+            message: `Removed entity at (${tile.x}, ${tile.y}).`,
+          });
+        }
         syncFromController();
       }
     };
@@ -441,6 +571,10 @@ export default function App() {
       ) {
         (maybeRuntime as { destroy: () => void }).destroy();
       }
+      if (feedbackTimeoutRef.current !== null) {
+        window.clearTimeout(feedbackTimeoutRef.current);
+        feedbackTimeoutRef.current = null;
+      }
       delete window.__SIM__;
     };
   }, [syncGhostFromController, syncPaletteFromController]);
@@ -473,6 +607,30 @@ export default function App() {
       >
         <PaletteView selectedKind={selectedKind} onSelectKind={onPaletteSelect} />
       </div>
+      {feedback === null ? null : (
+        <div
+          style={{
+            position: 'absolute',
+            top: 12,
+            right: 12,
+            zIndex: 1,
+            maxWidth: 260,
+            padding: '8px 10px',
+            borderRadius: 8,
+            background: feedback.kind === 'success' ? 'rgba(34, 139, 34, 0.85)' : 'rgba(139, 0, 0, 0.85)',
+            color: 'white',
+            fontFamily:
+              'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+            fontSize: 12,
+            lineHeight: 1.25,
+            userSelect: 'none',
+          }}
+          role="status"
+          aria-live="polite"
+        >
+          {feedback.message}
+        </div>
+      )}
     </div>
   );
 }
