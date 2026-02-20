@@ -7,11 +7,12 @@ export class Furnace {
   input: string | null = null;
   output: string | null = null;
   private crafting = false;
+  private recipeOutput: string | null = null;
   private smeltProgressTicks = 0;
 
   canAcceptItem(item: string): boolean {
     return (
-      item === 'iron-ore' &&
+      getRecipeForInput(item) !== undefined &&
       this.input === null &&
       !this.crafting &&
       this.output === null
@@ -42,19 +43,24 @@ export class Furnace {
   }
 
   update(_nowMs: number = 0): void {
-    if (!this.crafting && this.input === 'iron-ore' && this.output === null) {
+    if (!this.crafting) {
+      if (this.input === null || this.output !== null) {
+        return;
+      }
+
       const recipe = getRecipeForInput(this.input);
       if (recipe === undefined) {
         return;
       }
 
+      this.recipeOutput = recipe.output;
       this.crafting = true;
       this.smeltProgressTicks = 0;
       this.input = null;
       return;
     }
 
-    if (!this.crafting) {
+    if (this.output !== null) {
       return;
     }
 
@@ -62,12 +68,29 @@ export class Furnace {
       this.smeltProgressTicks += 1;
     }
 
-    if (this.smeltProgressTicks < FURNACE_SMELT_TICKS || this.output !== null) {
+    if (this.smeltProgressTicks < FURNACE_SMELT_TICKS) {
       return;
     }
 
-    this.output = 'iron-plate';
+    this.output = this.recipeOutput ?? null;
     this.crafting = false;
     this.smeltProgressTicks = 0;
+    this.recipeOutput = null;
+  }
+
+  get inputOccupied(): boolean {
+    return this.input !== null;
+  }
+
+  get outputOccupied(): boolean {
+    return this.output !== null;
+  }
+
+  get progress01(): number {
+    if (!this.crafting) {
+      return 0;
+    }
+
+    return this.smeltProgressTicks / FURNACE_SMELT_TICKS;
   }
 }
