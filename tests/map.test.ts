@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { createMap } from "../src/core/map";
 import {
   createPlacementController,
+  type EntityKind,
+  type Rotation,
   type Tile,
   type Simulation,
 } from "../src/ui/placement";
@@ -28,6 +30,8 @@ type PlacementFixture = {
   map: ReturnType<typeof createMap>;
   sim: Simulation;
   snapshotPlaced: () => string;
+  canPlaceReason: (kind: EntityKind, tile: Tile, rotation?: Rotation) => string;
+  canRemoveReason: (tile: Tile) => string;
 };
 
 function firstTile(
@@ -52,6 +56,45 @@ function createPlacementFixture(seed: number | string = 1337, width = 20, height
   const occupied = new Set<string>();
   let lastPlacementSnapshot = "";
 
+  const resolvePlacementReason = (kind: EntityKind, tile: Tile, _rotation: Rotation): string => {
+    if (!Number.isInteger(tile.x) || !Number.isInteger(tile.y)) {
+      return "out-of-bounds";
+    }
+
+    if (tile.x < 0 || tile.y < 0 || tile.x >= width || tile.y >= height) {
+      return "out-of-bounds";
+    }
+
+    if (occupied.has(tileKey(tile))) {
+      return "occupied";
+    }
+
+    if (kind === "Miner" && !map.isOre(tile.x, tile.y)) {
+      return "invalid-miner-on-resource";
+    }
+
+    return "ok";
+  };
+
+  const resolveRemovalReason = (tile: Tile): string => {
+    if (!Number.isInteger(tile.x) || !Number.isInteger(tile.y)) {
+      return "out-of-bounds";
+    }
+
+    if (tile.x < 0 || tile.y < 0 || tile.x >= width || tile.y >= height) {
+      return "out-of-bounds";
+    }
+
+    if (!occupied.has(tileKey(tile))) {
+      if (map.isOre(tile.x, tile.y)) {
+        return "non-removable-resource";
+      }
+      return "empty";
+    }
+
+    return "ok";
+  };
+
   const isOccupied = (tile: Tile): boolean => occupied.has(tileKey(tile));
 
   const snapshotPlaced = (): string => {
@@ -62,23 +105,7 @@ function createPlacementFixture(seed: number | string = 1337, width = 20, height
 
   const sim: Simulation = {
     canPlace(kind, tile, _rotation) {
-      if (!Number.isInteger(tile.x) || !Number.isInteger(tile.y)) {
-        return false;
-      }
-
-      if (tile.x < 0 || tile.y < 0 || tile.x >= width || tile.y >= height) {
-        return false;
-      }
-
-      if (isOccupied(tile)) {
-        return false;
-      }
-
-      if (kind === "Miner") {
-        return map.isOre(tile.x, tile.y);
-      }
-
-      return true;
+      return resolvePlacementReason(kind, tile, _rotation) === "ok";
     },
     addEntity(kind, tile, _rotation) {
       if (!sim.canPlace(kind, tile, _rotation)) {
@@ -97,10 +124,7 @@ function createPlacementFixture(seed: number | string = 1337, width = 20, height
       snapshotPlaced();
     },
     canRemove(tile) {
-      if (!isOccupied(tile)) {
-        return false;
-      }
-      return true;
+      return resolveRemovalReason(tile) === "ok";
     },
     hasEntityAt: isOccupied,
     isResourceTile: (tile) => map.isOre(tile.x, tile.y),
@@ -110,6 +134,12 @@ function createPlacementFixture(seed: number | string = 1337, width = 20, height
     map,
     sim,
     snapshotPlaced,
+    canPlaceReason(kind, tile, rotation = 0) {
+      return resolvePlacementReason(kind, tile, rotation);
+    },
+    canRemoveReason(tile) {
+      return resolveRemovalReason(tile);
+    },
   };
 }
 
@@ -178,53 +208,74 @@ describe("createMap", () => {
 
 describe("placement controller validation", () => {
   it("deterministically handles occupied targets and repeated placement/removal", () => {
-    const runSequence = (): string[] => {
+    const runSequence = (): { snapshots: string[]; reasons: string[] } => {
       const width = 20;
       const height = 20;
-      const { sim, map, snapshotPlaced } = createPlacementFixture(1337, width, height);
+      const { sim, map, snapshotPlaced, canPlaceReason, canRemoveReason } = createPlacementFixture(1337, width, height);
       const tile = firstTile(map, width, height, (x, y) => map.isOre(x, y));
-      const sequence: string[] = [];
+      const snapshots: string[] = [];
+      const reasons: string[] = [];
 
       const controller = createPlacementController(sim);
 
       controller.selectKind("Miner");
       controller.setCursor(tile);
-      sequence.push(snapshotPlaced());
+      snapshots.push(snapshotPlaced());
+      reasons.push(canPlaceReason("Miner", tile));
 
       controller.clickLMB();
-      sequence.push(snapshotPlaced());
+      reasons.push(canPlaceReason("Miner", tile));
+      snapshots.push(snapshotPlaced());
 
       controller.clickLMB();
-      sequence.push(snapshotPlaced());
+      reasons.push(canPlaceReason("Miner", tile));
+      snapshots.push(snapshotPlaced());
+
+      controller.selectKind("Belt");
+      reasons.push(canRemoveReason(tile));
+      controller.clickRMB();
+      reasons.push(canRemoveReason(tile));
+      snapshots.push(snapshotPlaced());
 
       controller.clickRMB();
-      sequence.push(snapshotPlaced());
+      reasons.push(canRemoveReason(tile));
+      snapshots.push(snapshotPlaced());
 
-      controller.clickRMB();
-      sequence.push(snapshotPlaced());
-
+      reasons.push(canPlaceReason("Belt", tile));
       controller.clickLMB();
-      sequence.push(snapshotPlaced());
+      reasons.push(canPlaceReason("Belt", tile));
+      snapshots.push(snapshotPlaced());
 
-      return sequence;
+      return { snapshots, reasons };
     };
 
     const first = runSequence();
     const second = runSequence();
 
     expect(first).toEqual(second);
-    expect(first[0]).toBe("");
-    expect(first[1]).not.toBe("");
-    expect(first[1]).toBe(first[2]);
-    expect(first[3]).toBe("");
-    expect(first[4]).toBe("");
-    expect(first[5]).toBe(first[1]);
+    expect(first.snapshots).toHaveLength(6);
+    expect(first.snapshots[0]).toBe("");
+    expect(first.snapshots[1]).not.toBe("");
+    expect(first.snapshots[1]).toBe(first.snapshots[2]);
+    expect(first.snapshots[1]).toBe(first.snapshots[5]);
+    expect(first.snapshots[3]).toBe("");
+    expect(first.snapshots[4]).toBe("");
+
+    expect(first.reasons).toHaveLength(8);
+    expect(first.reasons[0]).toBe("ok");
+    expect(first.reasons[1]).toBe("occupied");
+    expect(first.reasons[2]).toBe("occupied");
+    expect(first.reasons[3]).toBe("ok");
+    expect(first.reasons[4]).toBe("non-removable-resource");
+    expect(first.reasons[5]).toBe("non-removable-resource");
+    expect(first.reasons[6]).toBe("ok");
+    expect(first.reasons[7]).toBe("occupied");
   });
 
   it("rejects miner placement on non-resource tiles", () => {
     const width = 20;
     const height = 20;
-    const { map, sim, snapshotPlaced } = createPlacementFixture(7331, width, height);
+    const { map, sim, snapshotPlaced, canPlaceReason } = createPlacementFixture(7331, width, height);
     const nonOreTile = firstTile(map, width, height, (x, y) => !map.isOre(x, y));
     const oreTile = firstTile(map, width, height, (x, y) => map.isOre(x, y));
 
@@ -234,6 +285,7 @@ describe("placement controller validation", () => {
     controller.setCursor(nonOreTile);
     expect(controller.getState().canPlace).toBe(false);
     expect(controller.getGhost().valid).toBe(false);
+    expect(canPlaceReason("Miner", nonOreTile)).toBe("invalid-miner-on-resource");
     controller.clickLMB();
     expect(snapshotPlaced()).toBe("");
 
@@ -245,12 +297,13 @@ describe("placement controller validation", () => {
   it("prevents right-click from mutating unoccupied resource nodes", () => {
     const width = 20;
     const height = 20;
-    const { map, sim, snapshotPlaced } = createPlacementFixture(42, width, height);
+    const { map, sim, snapshotPlaced, canRemoveReason } = createPlacementFixture(42, width, height);
     const oreTile = firstTile(map, width, height, (x, y) => map.isOre(x, y));
 
     const controller = createPlacementController(sim);
     controller.setCursor(oreTile);
     controller.clickRMB();
+    expect(canRemoveReason(oreTile)).toBe("non-removable-resource");
 
     expect(snapshotPlaced()).toBe("");
   });
@@ -258,7 +311,7 @@ describe("placement controller validation", () => {
   it("returns stable, non-throwing results for out-of-bounds placement and removal", () => {
     const width = 20;
     const height = 20;
-    const { sim, snapshotPlaced } = createPlacementFixture(9001, width, height);
+    const { sim, snapshotPlaced, canPlaceReason, canRemoveReason } = createPlacementFixture(9001, width, height);
 
     const controller = createPlacementController(sim, { cols: width, rows: height });
     controller.selectKind("Miner");
@@ -266,6 +319,12 @@ describe("placement controller validation", () => {
     const outOfBoundsTile = { x: -1, y: 0 };
     const farOutsideTile = { x: width, y: height };
     const fractionalTile = { x: 0.5, y: 1.5 };
+
+    expect(canPlaceReason("Miner", outOfBoundsTile)).toBe("out-of-bounds");
+    expect(canPlaceReason("Miner", farOutsideTile)).toBe("out-of-bounds");
+    expect(canPlaceReason("Miner", fractionalTile)).toBe("out-of-bounds");
+    expect(canRemoveReason(outOfBoundsTile)).toBe("out-of-bounds");
+    expect(canRemoveReason(farOutsideTile)).toBe("out-of-bounds");
 
     expect(() => controller.setCursor(outOfBoundsTile)).not.toThrow();
     expect(controller.getState().cursor).toBeNull();
