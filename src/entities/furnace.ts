@@ -1,12 +1,13 @@
 import { getRecipeForInput } from '../recipes';
 
 export const FURNACE_TYPE = 'furnace';
+const FURNACE_SMELT_TICKS = 180;
 
 export class Furnace {
   input: string | null = null;
   output: string | null = null;
   private crafting = false;
-  private completeAtMs?: number;
+  private smeltProgressTicks = 0;
 
   canAcceptItem(item: string): boolean {
     return (
@@ -40,24 +41,33 @@ export class Furnace {
     return provided;
   }
 
-  update(nowMs: number = Date.now()): void {
+  update(_nowMs: number = 0): void {
     if (!this.crafting && this.input === 'iron-ore' && this.output === null) {
-      getRecipeForInput(this.input);
+      const recipe = getRecipeForInput(this.input);
+      if (recipe === undefined) {
+        return;
+      }
+
       this.crafting = true;
-      this.completeAtMs = nowMs + 1000;
+      this.smeltProgressTicks = 0;
       this.input = null;
       return;
     }
 
-    if (
-      this.crafting &&
-      this.completeAtMs !== undefined &&
-      nowMs >= this.completeAtMs &&
-      this.output === null
-    ) {
-      this.output = 'iron-plate';
-      this.crafting = false;
-      this.completeAtMs = undefined;
+    if (!this.crafting) {
+      return;
     }
+
+    if (this.smeltProgressTicks < FURNACE_SMELT_TICKS) {
+      this.smeltProgressTicks += 1;
+    }
+
+    if (this.smeltProgressTicks < FURNACE_SMELT_TICKS || this.output !== null) {
+      return;
+    }
+
+    this.output = 'iron-plate';
+    this.crafting = false;
+    this.smeltProgressTicks = 0;
   }
 }
