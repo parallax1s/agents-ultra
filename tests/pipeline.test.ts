@@ -609,4 +609,267 @@ describe('Transport cadence regressions', () => {
     });
     expect(furnace).toMatchObject({ input: 'iron-ore', output: null, completed: 1 });
   });
+
+  it('advances at most one belt tile per 15-tick cadence window', () => {
+    ensureTransportCadenceDefinitions();
+
+    const sim = createSim({ width: 8, height: 3, seed: 301 });
+
+    const sourceId = sim.addEntity({ kind: TEST_BELT_KIND, pos: { x: 1, y: 1 }, rot: 'E' });
+    const middleId = sim.addEntity({ kind: TEST_BELT_KIND, pos: { x: 2, y: 1 }, rot: 'E' });
+    const sinkId = sim.addEntity({ kind: TEST_BELT_KIND, pos: { x: 3, y: 1 }, rot: 'E' });
+
+    const source = getState<BeltState>(sim, sourceId);
+    const middle = getState<BeltState>(sim, middleId);
+    const sink = getState<BeltState>(sim, sinkId);
+
+    source.item = 'iron-ore';
+
+    let tick = 0;
+    const advanceTo = (targetTick: number): void => {
+      if (targetTick < tick) {
+        throw new Error(`advanceTo target ${targetTick} is before current tick ${tick}`);
+      }
+
+      stepTicks(sim, targetTick - tick);
+      tick = targetTick;
+    };
+
+    advanceTo(14);
+    expect(tick).toBe(14);
+    expect(source).toMatchObject({ item: 'iron-ore', attempts: 0, moved: 0, blocked: 0 });
+    expect(middle).toMatchObject({ item: null, attempts: 0, moved: 0, blocked: 0 });
+    expect(sink).toMatchObject({ item: null, attempts: 0, moved: 0, blocked: 0 });
+
+    advanceTo(15);
+    expect(tick).toBe(15);
+    expect(source).toMatchObject({ item: null, attempts: 1, moved: 1, blocked: 0 });
+    expect(middle).toMatchObject({ item: 'iron-ore', attempts: 1, moved: 0, blocked: 0 });
+    expect(sink).toMatchObject({ item: null, attempts: 0, moved: 0, blocked: 0 });
+
+    advanceTo(29);
+    expect(tick).toBe(29);
+    expect(source).toMatchObject({ item: null, moved: 1, attempts: 1 });
+    expect(middle).toMatchObject({ item: 'iron-ore', moved: 0, attempts: 1 });
+    expect(sink).toMatchObject({ item: null, moved: 0, attempts: 0 });
+
+    advanceTo(30);
+    expect(tick).toBe(30);
+    expect(source).toMatchObject({ item: null, moved: 1, attempts: 1 });
+    expect(middle).toMatchObject({ item: null, moved: 1, attempts: 2 });
+    expect(sink).toMatchObject({ item: 'iron-ore', moved: 0, attempts: 1 });
+
+    advanceTo(44);
+    expect(tick).toBe(44);
+    expect(middle).toMatchObject({ item: null, moved: 1, attempts: 2 });
+    expect(sink).toMatchObject({ item: 'iron-ore', moved: 0, attempts: 1 });
+  });
+
+  it('advances inserters only at 20-tick cadence boundaries', () => {
+    ensureTransportCadenceDefinitions();
+
+    const sim = createSim({ width: 10, height: 3, seed: 302 });
+
+    const furnaceId = sim.addEntity({ kind: TEST_FURNACE_KIND, pos: { x: 5, y: 1 }, rot: 'E' });
+    const inserterId = sim.addEntity({ kind: TEST_INSERTER_KIND, pos: { x: 4, y: 1 }, rot: 'E' });
+    const feedBeltId = sim.addEntity({ kind: TEST_BELT_KIND, pos: { x: 3, y: 1 }, rot: 'E' });
+
+    const inserter = getState<InserterState>(sim, inserterId);
+    const feedBelt = getState<BeltState>(sim, feedBeltId);
+    const furnace = getState<FurnaceState>(sim, furnaceId);
+
+    feedBelt.item = 'iron-ore';
+
+    let tick = 0;
+    const advanceTo = (targetTick: number): void => {
+      if (targetTick < tick) {
+        throw new Error(`advanceTo target ${targetTick} is before current tick ${tick}`);
+      }
+
+      stepTicks(sim, targetTick - tick);
+      tick = targetTick;
+    };
+
+    advanceTo(19);
+    expect(tick).toBe(19);
+    expect(inserter).toMatchObject({
+      attempts: 0,
+      pickups: 0,
+      drops: 0,
+      blockedPickups: 0,
+      blockedDrops: 0,
+      holding: null,
+    });
+
+    advanceTo(20);
+    expect(tick).toBe(20);
+    expect(inserter).toMatchObject({
+      attempts: 1,
+      pickups: 1,
+      drops: 0,
+      blockedPickups: 0,
+      blockedDrops: 0,
+      holding: 'iron-ore',
+    });
+    expect(feedBelt.item).toBeNull();
+
+    advanceTo(39);
+    expect(tick).toBe(39);
+    expect(inserter).toMatchObject({
+      attempts: 1,
+      pickups: 1,
+      drops: 0,
+      blockedPickups: 0,
+      blockedDrops: 0,
+    });
+
+    advanceTo(40);
+    expect(tick).toBe(40);
+    expect(inserter).toMatchObject({
+      attempts: 2,
+      pickups: 1,
+      drops: 1,
+      blockedPickups: 0,
+      blockedDrops: 0,
+      holding: null,
+    });
+    expect(furnace.input).toBe('iron-ore');
+    expect(furnace.crafting).toBe(false);
+    expect(furnace.progressTicks).toBe(0);
+    expect(furnace.output).toBeNull();
+
+    feedBelt.item = 'iron-ore';
+
+    advanceTo(59);
+    expect(tick).toBe(59);
+    expect(inserter).toMatchObject({
+      attempts: 2,
+      pickups: 1,
+      drops: 1,
+      blockedPickups: 0,
+      blockedDrops: 0,
+      holding: null,
+    });
+
+    advanceTo(60);
+    expect(tick).toBe(60);
+    expect(inserter).toMatchObject({
+      attempts: 3,
+      pickups: 2,
+      drops: 1,
+      blockedPickups: 0,
+      blockedDrops: 0,
+      holding: 'iron-ore',
+    });
+  });
+
+  it('lets miners emit only on accepted downstream slots and only every 60-tick attempt', () => {
+    ensureTransportCadenceDefinitions();
+
+    const sim = createSim({ width: 8, height: 3, seed: 303 });
+
+    const blockingBeltId = sim.addEntity({ kind: TEST_BELT_KIND, pos: { x: 2, y: 1 }, rot: 'E' });
+    const minerId = sim.addEntity({ kind: TEST_MINER_KIND, pos: { x: 1, y: 1 }, rot: 'E' });
+
+    const blockingBelt = getState<BeltState>(sim, blockingBeltId);
+    const miner = getState<MinerState>(sim, minerId);
+    blockingBelt.item = 'iron-ore';
+
+    let tick = 0;
+    const advanceTo = (targetTick: number): void => {
+      if (targetTick < tick) {
+        throw new Error(`advanceTo target ${targetTick} is before current tick ${tick}`);
+      }
+
+      stepTicks(sim, targetTick - tick);
+      tick = targetTick;
+    };
+
+    advanceTo(59);
+    expect(tick).toBe(59);
+    expect(miner).toMatchObject({
+      ticks: 59,
+      attempts: 0,
+      moved: 0,
+      blocked: 0,
+      holding: 'iron-ore',
+    });
+    expect(blockingBelt.item).toBe('iron-ore');
+
+    advanceTo(60);
+    expect(tick).toBe(60);
+    expect(miner).toMatchObject({
+      ticks: 60,
+      attempts: 1,
+      moved: 0,
+      blocked: 1,
+      holding: 'iron-ore',
+    });
+    expect(blockingBelt.item).toBe('iron-ore');
+
+    blockingBelt.item = null;
+
+    advanceTo(119);
+    expect(tick).toBe(119);
+    expect(miner).toMatchObject({
+      attempts: 1,
+      moved: 0,
+      blocked: 1,
+      holding: 'iron-ore',
+    });
+
+    advanceTo(120);
+    expect(tick).toBe(120);
+    expect(miner).toMatchObject({
+      attempts: 2,
+      moved: 1,
+      blocked: 1,
+      holding: null,
+    });
+    expect(blockingBelt.item).toBe('iron-ore');
+  });
+
+  it('halts transport movement while paused and resumes from the exact prior cadence phase', () => {
+    ensureTransportCadenceDefinitions();
+
+    const sim = createSim({ width: 8, height: 3, seed: 304 });
+
+    const sourceId = sim.addEntity({ kind: TEST_BELT_KIND, pos: { x: 1, y: 1 }, rot: 'E' });
+    const targetId = sim.addEntity({ kind: TEST_BELT_KIND, pos: { x: 2, y: 1 }, rot: 'E' });
+
+    const source = getState<BeltState>(sim, sourceId);
+    const target = getState<BeltState>(sim, targetId);
+    source.item = 'iron-ore';
+
+    stepTicks(sim, 14);
+    expect(sim.tickCount).toBe(14);
+    expect(source).toMatchObject({ item: 'iron-ore', moved: 0, attempts: 0, blocked: 0 });
+    expect(target).toMatchObject({ item: null, moved: 0, attempts: 0, blocked: 0 });
+
+    const snapshot = {
+      tickCount: sim.tickCount,
+      elapsedMs: sim.elapsedMs,
+      source: { ...source },
+      target: { ...target },
+    };
+
+    sim.pause();
+    stepTicks(sim, 42);
+    sim.resume();
+
+    expect(sim.tickCount).toBe(snapshot.tickCount);
+    expect(sim.elapsedMs).toBe(snapshot.elapsedMs);
+    expect(source).toMatchObject(snapshot.source);
+    expect(target).toMatchObject(snapshot.target);
+
+    sim.step(TICK_MS / 2);
+    expect(sim.tickCount).toBe(14);
+    expect(source).toMatchObject(snapshot.source);
+    expect(target).toMatchObject(snapshot.target);
+
+    sim.step(TICK_MS / 2);
+    expect(sim.tickCount).toBe(15);
+    expect(source).toMatchObject({ item: null, moved: 1, attempts: 1, blocked: 0 });
+    expect(target).toMatchObject({ item: 'iron-ore', moved: 0, attempts: 1 });
+  });
 });
