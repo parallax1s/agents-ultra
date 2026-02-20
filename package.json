@@ -5,6 +5,7 @@
     "react-dom": "^18.3.1"
   },
   "scripts": {
+    "hygiene": "node scripts/ensure-repo-hygiene.mjs",
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
