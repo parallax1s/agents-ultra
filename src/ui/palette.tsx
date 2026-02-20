@@ -17,9 +17,10 @@ export default function Palette({
 }: PaletteProps) {
   const enabledKinds = new Set<EntityKind>(kinds);
   const orderedKinds = BUTTON_ORDER.filter((kind) => enabledKinds.has(kind));
+  const currentTool = selectedKind ?? 'None';
 
   return (
-    <div className={className}>
+    <div className={className} data-testid="palette" data-current-tool={currentTool}>
       {orderedKinds.map((kind) => {
         const isActive = selectedKind === kind;
 
@@ -28,7 +29,10 @@ export default function Palette({
             key={kind}
             type="button"
             aria-pressed={isActive}
+            aria-label={`Tool ${kind}`}
             data-active={isActive ? 'true' : 'false'}
+            data-testid={`palette-tool-${kind.toLowerCase()}`}
+            data-tool-kind={kind}
             onClick={() => onSelect(kind)}
           >
             {kind}
