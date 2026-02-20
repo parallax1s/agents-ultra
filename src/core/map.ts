@@ -1,5 +1,7 @@
 import type { TileType } from "./types";
 
+import type { GridCoord } from "./types";
+
 export interface GeneratedMap {
   width: number;
   height: number;
@@ -7,6 +9,47 @@ export interface GeneratedMap {
   isOre: (x: number, y: number) => boolean;
   isWithinBounds: (x: number, y: number) => boolean;
 }
+
+type OrderedEntity = {
+  id: string;
+  pos: GridCoord;
+};
+
+const toStableEntityId = (id: string): number => {
+  const maybeNumber = Number(id);
+  return Number.isFinite(maybeNumber) && Number.isInteger(maybeNumber) ? maybeNumber : Number.MAX_SAFE_INTEGER;
+};
+
+const compareId = (left: string, right: string): number => {
+  if (left === right) {
+    return 0;
+  }
+
+  const leftValue = toStableEntityId(left);
+  const rightValue = toStableEntityId(right);
+
+  if (leftValue !== rightValue) {
+    return leftValue - rightValue;
+  }
+
+  return left < right ? -1 : 1;
+};
+
+export const compareGridEntityOrder = (left: OrderedEntity, right: OrderedEntity): number => {
+  if (left.pos.y !== right.pos.y) {
+    return left.pos.y - right.pos.y;
+  }
+
+  if (left.pos.x !== right.pos.x) {
+    return left.pos.x - right.pos.x;
+  }
+
+  return compareId(left.id, right.id);
+};
+
+export const sortByGridEntityOrder = <T extends OrderedEntity>(entities: ReadonlyArray<T>): T[] => {
+  return [...entities].sort(compareGridEntityOrder);
+};
 
 const MIN_SPAWN_SIZE = 10;
 
