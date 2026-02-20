@@ -52,11 +52,23 @@ Notes:
 ### Split test modes
 
 - `npm test` (maintenance/local): run fast checks locally before/while editing.
-- `npm run test:strict` (CI/verification): run the strict path intended for CI and release gating.
+- `npm run test:strict` (CI/verification): run repository hygiene checks first, then strict unit and e2e tests.
 
 Expected behavior when dev dependencies are missing:
 - `npm test`: skips missing optional test suites and exits successfully.
-- `npm run test:strict`: exits non-zero with install guidance when required test binaries are absent.
+- `npm run test:strict`: runs `npm run verify:hygiene` first (which fails fast on typecheck/build issues), then executes strict tests. In strict mode it exits non-zero with install guidance when required test binaries are absent.
+
+### Strict verification sequence
+
+`npm run test:strict` now runs:
+
+```bash
+npm run verify:hygiene
+npm run test:unit -- --strict
+npm run test:e2e:strict
+```
+
+This ordering fails fast so hygiene violations are reported before any strict test execution.
 
 ## Maintenance Sweep
 Run this quick regression loop before/after gameplay changes:
