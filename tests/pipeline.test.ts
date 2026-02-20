@@ -68,6 +68,13 @@ type FurnaceState = {
   completed: number;
 };
 
+type SharedTargetRaceState = {
+  tick: number;
+  sourceWest: BeltState;
+  sourceSouth: BeltState;
+  sharedTarget: BeltState;
+};
+
 type SimWithGridLookup = {
   getEntitiesAt(pos: Vec): EntityBase[];
 };
@@ -283,7 +290,58 @@ const ensureTransportCadenceDefinitions = (): void => {
   }
 };
 
+const runSharedTargetBeltRace = (): SharedTargetRaceState => {
+  ensureTransportCadenceDefinitions();
+
+  const sim = createSim({ width: 4, height: 4, seed: 222 });
+
+  const westSourceId = sim.addEntity({ kind: TEST_BELT_KIND, pos: { x: 1, y: 2 }, rot: 'W' });
+  const southSourceId = sim.addEntity({ kind: TEST_BELT_KIND, pos: { x: 0, y: 1 }, rot: 'S' });
+  const sharedTargetId = sim.addEntity({ kind: TEST_BELT_KIND, pos: { x: 0, y: 2 }, rot: 'W' });
+
+  const westSource = getState<BeltState>(sim, westSourceId);
+  const southSource = getState<BeltState>(sim, southSourceId);
+  const sharedTarget = getState<BeltState>(sim, sharedTargetId);
+  westSource.item = 'iron-ore';
+  southSource.item = 'iron-plate';
+
+  stepTicks(sim, 30);
+
+  return {
+    tick: sim.tickCount,
+    sourceWest: { ...westSource },
+    sourceSouth: { ...southSource },
+    sharedTarget: { ...sharedTarget },
+  };
+};
+
 describe('Transport cadence regressions', () => {
+  it('replays shared-target belt transfer deterministically across identical seeds and inputs', () => {
+    const first = runSharedTargetBeltRace();
+    const second = runSharedTargetBeltRace();
+
+    expect(first).toEqual(second);
+    expect(first.tick).toBe(30);
+    expect(first.sharedTarget).toMatchObject({
+      item: 'iron-ore',
+      attempts: 2,
+      moved: 0,
+      blocked: 2,
+    });
+    expect(first.sourceWest).toMatchObject({
+      item: null,
+      attempts: 1,
+      moved: 1,
+      blocked: 0,
+    });
+    expect(first.sourceSouth).toMatchObject({
+      item: 'iron-plate',
+      attempts: 2,
+      moved: 0,
+      blocked: 2,
+    });
+  });
+
   it('enforces Miner 60-tick gating with deterministic blocked and unblocked retries', () => {
     ensureTransportCadenceDefinitions();
 
