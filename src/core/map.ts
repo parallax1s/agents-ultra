@@ -1,4 +1,9 @@
-import type { GridCoord, TileType } from "./types";
+import type { TileType } from "./types";
+
+type GridCoord = {
+  x: number;
+  y: number;
+};
 
 export type MapOccupantKind = "miner" | "belt" | "inserter" | "furnace";
 
