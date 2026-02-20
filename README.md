@@ -75,13 +75,23 @@ Notes:
 - `npm run test` (maintenance/local): run fast checks locally before/while editing.
 - `npm run test:strict` (CI/verification): run repository hygiene checks first, then strict unit and e2e tests.
 
-### Movement-critical pre-merge check
+### Movement Regression Gate (Local Pre-Merge)
 
 ```bash
 npm run test:movement
 ```
 
-This runs the movement-focused regression subset (`map/sim/sim-compat` units plus movement smoke E2E).
+Purpose: this is the dedicated deterministic transport/simulation regression gate. It catches cadence drift, pause/resume phase loss, and other deterministic movement failures before they reach `main`.
+
+Run it locally from the repository root:
+1. `npm install` (first run only, or after dependency updates)
+2. `npm run test:movement`
+
+When to run it:
+- Before merge for any movement, cadence, pause/resume, transport, or simulation-loop change.
+- As routine local hygiene before pushing gameplay logic changes.
+
+This gate runs the movement-focused regression subset (`map/sim/sim-compat` unit coverage plus movement smoke E2E).
 
 Expected behavior when dev dependencies are missing:
 - `npm run test`: skips missing optional test suites and exits successfully.
