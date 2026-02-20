@@ -71,6 +71,7 @@ type RuntimeSimulation = Simulation & {
   tick: number;
   tickCount: number;
   elapsedMs: number;
+  isPaused: () => boolean;
   getMap: () => ReturnType<typeof createMap>;
   getAllEntities: () => RuntimeEntity[];
   getPlacementSnapshot: () => PlacementSnapshot;
@@ -80,6 +81,13 @@ type RuntimeSimulation = Simulation & {
 type Feedback = {
   kind: 'success' | 'error';
   message: string;
+};
+
+type HudState = {
+  tool: EntityKind | null;
+  rotation: Rotation;
+  paused: boolean;
+  tick: number;
 };
 
 const RUNTIME_KIND: Record<EntityKind, RuntimeEntityKind> = {
@@ -190,6 +198,10 @@ function createRuntimeSimulation(): RuntimeSimulation {
       paused = !paused;
     },
 
+    isPaused() {
+      return paused;
+    },
+
     destroy() {
       if (intervalId !== null) {
         window.clearInterval(intervalId);
@@ -231,6 +243,39 @@ function getCanRemoveOutcome(sim: Simulation, tile: Tile): boolean {
   }
 
   return false;
+}
+
+function getSimulationTick(sim: Simulation): number {
+  const snapshot = (sim as { getPlacementSnapshot?: () => { tick?: number; tickCount?: number } }).getPlacementSnapshot;
+  if (typeof snapshot === 'function') {
+    const value = snapshot.call(sim);
+    if (typeof value?.tick === 'number') {
+      return value.tick;
+    }
+    if (typeof value?.tickCount === 'number') {
+      return value.tickCount;
+    }
+  }
+
+  const withTick = sim as { tick?: unknown; tickCount?: unknown };
+  if (typeof withTick.tick === 'number') {
+    return withTick.tick;
+  }
+  if (typeof withTick.tickCount === 'number') {
+    return withTick.tickCount;
+  }
+
+  return 0;
+}
+
+function getSimulationPaused(sim: Simulation): boolean {
+  const withMethod = sim as { isPaused?: () => boolean };
+  if (typeof withMethod.isPaused === 'function') {
+    return withMethod.isPaused();
+  }
+
+  const withFlag = sim as { paused?: unknown };
+  return typeof withFlag.paused === 'boolean' ? withFlag.paused : false;
 }
 
 function describeKindOrTarget(kind: EntityKind | null, tile: Tile | null): string {
@@ -329,9 +374,46 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const controllerRef = useRef<ReturnType<typeof createPlacementController> | null>(null);
   const rendererRef = useRef<RendererApi | null>(null);
+  const simulationRef = useRef<Simulation>(NOOP_SIMULATION);
   const feedbackTimeoutRef = useRef<number | null>(null);
+  const initialHud: HudState = {
+    tool: null,
+    rotation: 0,
+    paused: false,
+    tick: 0,
+  };
   const [selectedKind, setSelectedKind] = useState(null as EntityKind | null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const hudRef = useRef<HudState>(initialHud);
+  if (hudRef.current === null) {
+    hudRef.current = initialHud;
+  }
+  const [hud, setHud] = useState<HudState>(initialHud);
+
+  const setHudState = useCallback(
+    (patch: Partial<HudState>): void => {
+      const current = hudRef.current ?? initialHud;
+      const next: HudState = {
+        tool: patch.tool === undefined ? current.tool : patch.tool,
+        rotation: patch.rotation === undefined ? current.rotation : patch.rotation,
+        paused: patch.paused === undefined ? current.paused : patch.paused,
+        tick: patch.tick === undefined ? current.tick : patch.tick,
+      };
+
+      if (
+        current.tool === next.tool &&
+        current.rotation === next.rotation &&
+        current.paused === next.paused &&
+        current.tick === next.tick
+      ) {
+        return;
+      }
+
+      hudRef.current = next;
+      setHud(next);
+    },
+    [setHud],
+  );
 
   const syncPaletteFromController = useCallback((): void => {
     const controller = controllerRef.current;
@@ -339,8 +421,26 @@ export default function App() {
       return;
     }
 
-    setSelectedKind(controller.getState().selectedKind);
-  }, []);
+    const state = controller.getState();
+    setSelectedKind(state.selectedKind);
+    setHudState({
+      tool: state.selectedKind,
+      rotation: state.rotation,
+    });
+  }, [setHudState]);
+
+  const syncHudFromSimulation = useCallback((): void => {
+    const sim = simulationRef.current;
+    if (!sim) {
+      return;
+    }
+    const nextTick = getSimulationTick(sim);
+    const nextPaused = getSimulationPaused(sim);
+    setHudState({
+      tick: nextTick,
+      paused: nextPaused,
+    });
+  }, [setHudState]);
 
   const syncGhostFromController = useCallback((): void => {
     const controller = controllerRef.current;
@@ -398,6 +498,7 @@ export default function App() {
     const controller = createPlacementController(sim);
     const renderer = createRenderer(canvas) as unknown as RendererApi;
 
+    simulationRef.current = sim;
     controllerRef.current = controller;
     rendererRef.current = renderer;
 
@@ -409,6 +510,7 @@ export default function App() {
     const syncFromController = (): void => {
       syncPaletteFromController();
       syncGhostFromController();
+      syncHudFromSimulation();
     };
 
     const resizeCanvas = (): void => {
@@ -536,9 +638,14 @@ export default function App() {
 
       if (event.code === 'Space') {
         sim.togglePause?.();
+        syncHudFromSimulation();
         event.preventDefault();
       }
     };
+
+    const hudIntervalId = window.setInterval((): void => {
+      syncHudFromSimulation();
+    }, 100);
 
     resizeCanvas();
     syncFromController();
@@ -558,9 +665,11 @@ export default function App() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('resize', resizeCanvas);
 
+      window.clearInterval(hudIntervalId);
       renderer.destroy();
       rendererRef.current = null;
       controllerRef.current = null;
+      simulationRef.current = NOOP_SIMULATION;
 
       const maybeRuntime = window.__SIM__;
       if (
@@ -577,7 +686,11 @@ export default function App() {
       }
       delete window.__SIM__;
     };
-  }, [syncGhostFromController, syncPaletteFromController]);
+  }, [syncGhostFromController, syncHudFromSimulation, syncPaletteFromController]);
+
+  const hudToolValue = hud.tool ?? 'None';
+  const hudRotationValue = ROTATION_TO_DIRECTION[hud.rotation];
+  const hudPauseValue = hud.paused ? 'Paused' : 'Running';
 
   return (
     <div
@@ -606,6 +719,49 @@ export default function App() {
         }}
       >
         <PaletteView selectedKind={selectedKind} onSelectKind={onPaletteSelect} />
+      </div>
+      <div
+        data-testid="hud"
+        style={{
+          position: 'absolute',
+          left: 12,
+          bottom: 12,
+          zIndex: 1,
+          padding: '8px 10px',
+          borderRadius: 8,
+          background: 'rgba(20, 20, 20, 0.75)',
+          color: 'white',
+          fontFamily:
+            'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+          fontSize: 12,
+          lineHeight: 1.35,
+          userSelect: 'none',
+        }}
+      >
+        <div data-testid="hud-tool">
+          <span>Tool:</span>{' '}
+          <span data-testid="hud-tool-value" data-value={hudToolValue}>
+            {hudToolValue}
+          </span>
+        </div>
+        <div data-testid="hud-rotation">
+          <span>Rotation:</span>{' '}
+          <span data-testid="hud-rotation-value" data-value={hudRotationValue}>
+            {hudRotationValue}
+          </span>
+        </div>
+        <div data-testid="hud-pause">
+          <span>Pause:</span>{' '}
+          <span data-testid="hud-pause-value" data-value={hudPauseValue.toLowerCase()}>
+            {hudPauseValue}
+          </span>
+        </div>
+        <div data-testid="hud-tick">
+          <span>Tick:</span>{' '}
+          <span data-testid="hud-tick-value" data-value={String(hud.tick)}>
+            {hud.tick}
+          </span>
+        </div>
       </div>
       {feedback === null ? null : (
         <div
