@@ -4,11 +4,139 @@ import { createMap } from "../src/core/map";
 import { createSim } from "../src/core/sim";
 import { registerEntity, getDefinition } from "../src/core/registry";
 import { createSnapshot } from "../src/core/snapshot";
-import type { ItemKind } from "../src/core/types";
+import type { Direction, ItemKind } from "../src/core/types";
 
 type SnapshotTestSim = ReturnType<typeof createSim>;
 
 const TICK_MS = 1000 / 60;
+const BELT_TRANSFER_TICKS = 15;
+const BELT_FORWARD_SLOT = 2;
+
+const isObjectLike = (value: unknown): value is Record<string, unknown> => {
+  return value !== null && typeof value === "object";
+};
+
+const STEP_BY_DIRECTION: Record<Direction, { x: number; y: number }> = {
+  N: { x: 0, y: -1 },
+  E: { x: 1, y: 0 },
+  S: { x: 0, y: 1 },
+  W: { x: -1, y: 0 },
+};
+
+type SnapshotBeltState = {
+  items: Array<ItemKind | null>;
+  ticks: number;
+  _snapshotRelayReceivedTick?: number;
+};
+
+const asSnapshotBeltState = (value: unknown): SnapshotBeltState | undefined => {
+  if (!isObjectLike(value)) {
+    return undefined;
+  }
+
+  const maybeState = value as {
+    items?: unknown;
+    ticks?: unknown;
+    _snapshotRelayReceivedTick?: unknown;
+  };
+
+  if (!Array.isArray(maybeState.items)) {
+    return undefined;
+  }
+
+  const typedItems = maybeState.items as Array<unknown>;
+  for (let i = 0; i < typedItems.length; i += 1) {
+    const item = typedItems[i];
+    if (item !== "iron-ore" && item !== "iron-plate") {
+      typedItems[i] = null;
+    }
+  }
+
+  if (typeof maybeState.ticks !== "number" || !Number.isFinite(maybeState.ticks)) {
+    maybeState.ticks = 0;
+  }
+
+  if (typeof maybeState._snapshotRelayReceivedTick !== "number" || !Number.isFinite(maybeState._snapshotRelayReceivedTick)) {
+    delete maybeState._snapshotRelayReceivedTick;
+  }
+
+  const typedState = maybeState as {
+    items: Array<ItemKind | null>;
+    ticks: number;
+    _snapshotRelayReceivedTick?: number;
+  };
+  typedState.ticks = Math.floor(typedState.ticks);
+  return typedState;
+};
+
+const resolveBeltState = (
+  sim: unknown,
+  x: number,
+  y: number,
+): SnapshotBeltState | undefined => {
+  if (!isObjectLike(sim) || !("getEntitiesAt" in sim)) {
+    return undefined;
+  }
+
+  const state = sim as {
+    getEntitiesAt?: (pos: { readonly x: number; readonly y: number }) => Array<{
+      kind: string;
+      state?: unknown;
+    }>;
+  };
+  if (typeof state.getEntitiesAt !== "function") {
+    return undefined;
+  }
+
+  for (const entity of state.getEntitiesAt({ x, y })) {
+    if (entity.kind !== "belt") {
+      continue;
+    }
+
+    const beltState = asSnapshotBeltState(entity.state);
+    if (beltState !== undefined) {
+      return beltState;
+    }
+  }
+
+  return undefined;
+};
+
+const tryRelayForward = (
+  sourceState: SnapshotBeltState,
+  sim: unknown,
+  sourcePos: { x: number; y: number },
+  sourceRot: Direction,
+): void => {
+  const sourceOutput = sourceState.items[BELT_FORWARD_SLOT];
+  if (sourceOutput !== "iron-ore" && sourceOutput !== "iron-plate") {
+    return;
+  }
+
+  const targetCoords = {
+    x: sourcePos.x + STEP_BY_DIRECTION[sourceRot].x,
+    y: sourcePos.y + STEP_BY_DIRECTION[sourceRot].y,
+  };
+  const targetState = resolveBeltState(sim, targetCoords.x, targetCoords.y);
+  if (targetState === undefined) {
+    return;
+  }
+  if (targetState.items.some((item) => item !== null)) {
+    return;
+  }
+  if (targetState._snapshotRelayReceivedTick === sourceState.ticks) {
+    return;
+  }
+
+  const nextTargetItems = targetState.items.slice(0);
+  nextTargetItems[BELT_FORWARD_SLOT] = sourceOutput;
+  targetState.items = nextTargetItems;
+  targetState._snapshotRelayReceivedTick = sourceState.ticks;
+
+  const nextSourceItems = sourceState.items.slice(0);
+  nextSourceItems[BELT_FORWARD_SLOT] = null;
+  sourceState.items = nextSourceItems;
+};
 
 const ensureMinerDefinition = (): void => {
   if (getDefinition("miner") !== undefined) {
@@ -42,15 +170,18 @@ const ensureBeltDefinition = (): void => {
   }
 
   registerEntity("belt", {
-    create: () => ({ items: [null, "iron-ore", null] }),
-    update: (entity) => {
-      if (typeof entity.state !== "object" || entity.state === null) {
+    create: () => ({ items: [null, "iron-ore", null], ticks: 0 }),
+    update: (entity, _dtMs, sim) => {
+      const state = asSnapshotBeltState(entity.state);
+      if (state === undefined) {
         return;
       }
 
-      const state = entity.state as { items?: unknown };
-      if (!Array.isArray(state.items)) {
-        return;
+      state.ticks += 1;
+      const receivedThisTick = state._snapshotRelayReceivedTick === state.ticks;
+
+      if (state.ticks % BELT_TRANSFER_TICKS === 0 && !receivedThisTick) {
+        tryRelayForward(state, sim, entity.pos, entity.rot);
       }
 
       const current = state.items;
@@ -467,6 +598,65 @@ describe("createSnapshot", () => {
     expect(boundarySnapshot.time.tick).toBe(4);
     expect(boundarySnapshot.time.tickCount).toBe(4);
     expect(boundarySnapshot.time.elapsedMs).toBe(152.5);
+  });
+
+  it("captures relay-deferral on the first 15-tick boundary in snapshot reads", () => {
+    ensureBeltDefinition();
+
+    const sim = createSim({ width: 6, height: 4, seed: 4242 });
+    const sourceId = sim.addEntity({ kind: "belt", pos: { x: 1, y: 1 }, rot: "E" });
+    const middleId = sim.addEntity({ kind: "belt", pos: { x: 2, y: 1 }, rot: "E" });
+    const sinkId = sim.addEntity({ kind: "belt", pos: { x: 3, y: 1 }, rot: "E" });
+
+    const sourceEntity = sim.getEntityById(sourceId);
+    const middleEntity = sim.getEntityById(middleId);
+    const sinkEntity = sim.getEntityById(sinkId);
+
+    if (sourceEntity?.state === undefined || middleEntity?.state === undefined || sinkEntity?.state === undefined) {
+      throw new Error("Expected relay belt entities to be created with simulation state");
+    }
+
+    const sourceState = asSnapshotBeltState(sourceEntity.state);
+    const middleState = asSnapshotBeltState(middleEntity.state);
+    const sinkState = asSnapshotBeltState(sinkEntity.state);
+    if (sourceState === undefined || middleState === undefined || sinkState === undefined) {
+      throw new Error("Expected relay belt entities to use snapshot belt state");
+    }
+
+    sourceState.items = [null, "iron-ore", null];
+    middleState.items = [null, null, null];
+    sinkState.items = [null, null, null];
+    sourceState.ticks = 0;
+    middleState.ticks = 0;
+    sinkState.ticks = 0;
+
+    progress(sim, 14);
+    const beforeBoundary = createSnapshot({
+      ...sim,
+      width: 6,
+      height: 4,
+      tileSize: 16,
+    });
+
+    const beforeSnapshotMiddle = beforeBoundary.entities.find((entity) => entity.id === middleId)?.items;
+    const beforeSnapshotSink = beforeBoundary.entities.find((entity) => entity.id === sinkId)?.items;
+    expect(beforeBoundary.time.tick).toBe(14);
+    expect(beforeSnapshotMiddle).toEqual([null, null, null]);
+    expect(beforeSnapshotSink).toEqual([null, null, null]);
+
+    progress(sim, 1);
+    const afterBoundary = createSnapshot({
+      ...sim,
+      width: 6,
+      height: 4,
+      tileSize: 16,
+    });
+    const afterSnapshotMiddle = afterBoundary.entities.find((entity) => entity.id === middleId)?.items ?? [];
+    const afterSnapshotSink = afterBoundary.entities.find((entity) => entity.id === sinkId)?.items ?? [];
+
+    expect(afterBoundary.time.tick).toBe(15);
+    expect(afterSnapshotMiddle.some((item) => item === "iron-ore")).toBe(true);
+    expect(afterSnapshotSink.some((item) => item === "iron-ore")).toBe(false);
   });
 
   it("keeps snapshot timing monotonic on repeated reads even if sim timing regresses", () => {
