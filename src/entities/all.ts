@@ -5,7 +5,15 @@ export const BELT_ATTEMPT_TICKS = 15;
 export const INSERTER_ATTEMPT_TICKS = 20;
 
 const isBoundaryTick = (tick: number, interval: number): boolean => {
-  return tick > 0 && tick % interval === 0;
+  if (interval <= 0 || !Number.isInteger(interval)) {
+    return false;
+  }
+
+  if (!Number.isInteger(tick) || tick <= 0) {
+    return false;
+  }
+
+  return tick % interval === 0;
 };
 
 export const hasElapsedBoundaryTick = (tick: number, interval: 15 | 20 | 60): boolean => {
