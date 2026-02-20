@@ -9,6 +9,8 @@ export class Furnace {
   private crafting = false;
   private recipeOutput: string | null = null;
   private smeltProgressTicks = 0;
+  private inputTouchedThisBoundary = false;
+  private outputTouchedThisBoundary = false;
 
   canAcceptItem(item: string): boolean {
     return (
@@ -25,6 +27,7 @@ export class Furnace {
     }
 
     this.input = item;
+    this.inputTouchedThisBoundary = true;
     return true;
   }
 
@@ -39,6 +42,7 @@ export class Furnace {
 
     const provided = this.output;
     this.output = null;
+    this.outputTouchedThisBoundary = true;
     return provided;
   }
 
@@ -69,7 +73,17 @@ export class Furnace {
   }
 
   update(_nowMs: number = 0): void {
+    const inputTouchedDuringBoundary = this.inputTouchedThisBoundary;
+    const outputWasTakenDuringBoundary = this.outputTouchedThisBoundary;
+
+    this.inputTouchedThisBoundary = false;
+    this.outputTouchedThisBoundary = false;
+
     if (!this.crafting) {
+      if (outputWasTakenDuringBoundary && !inputTouchedDuringBoundary) {
+        return;
+      }
+
       this.tryStartCrafting();
       return;
     }
