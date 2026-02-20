@@ -122,6 +122,7 @@ type InserterState = Record<string, unknown> & {
   tickPhase: number;
   holding: ItemKind | null;
   state: 0 | 1 | 2 | 3;
+  skipDropAtTick?: number;
 };
 
 type BeltTransferPlan = {
@@ -323,10 +324,67 @@ const tryProvideViaMethod = (host: unknown): ItemKind | null => {
   return null;
 };
 
+const isInsertDirectionValid = (source: EntityBase, target: EntityBase): boolean => {
+  const incomingDir = directionFromTo(source.pos, target.pos);
+  return incomingDir !== undefined && incomingDir === target.rot;
+};
+
+const canAcceptDirectly = (
+  source: EntityBase,
+  target: EntityBase,
+  item: ItemKind,
+): boolean => {
+  if (target.kind === "belt") {
+    const beltState = ensureBeltState(target);
+    return beltState.item === null;
+  }
+
+  if (target.kind === "inserter") {
+    const inserterState = ensureInserterState(target);
+    return isInsertDirectionValid(source, target) && inserterState.holding === null;
+  }
+
+  if (canAcceptViaMethod(target.state, item) || canAcceptViaMethod(target, item)) {
+    return true;
+  }
+
+  if (target.kind !== "furnace" || !isRecord(target.state)) {
+    return false;
+  }
+
+  if (item !== "iron-ore") {
+    return false;
+  }
+
+  const input = target.state.input;
+  const inputOccupied = target.state.inputOccupied;
+  return (input === null || input === undefined) && inputOccupied !== true;
+};
+
+const resolveDirectTransportTarget = (
+  sim: SimLike,
+  source: EntityBase,
+  item: ItemKind,
+  targetPos: GridCoord,
+): EntityBase | null => {
+  const candidates = getEntitiesAt(sim, targetPos);
+  for (const candidate of candidates) {
+    if (candidate.id === source.id) {
+      continue;
+    }
+    if (canAcceptDirectly(source, candidate, item)) {
+      return candidate;
+    }
+  }
+
+  return null;
+};
+
 const tryAcceptItem = (
   target: EntityBase,
   item: ItemKind,
-  sourcePos: GridCoord,
+  source: EntityBase,
+  sourceTick?: number,
 ): boolean => {
   if (target.kind === "belt") {
     const beltState = ensureBeltState(target);
@@ -340,10 +398,14 @@ const tryAcceptItem = (
 
   if (target.kind === "inserter") {
     const inserterState = ensureInserterState(target);
-    const incomingDir = directionFromTo(sourcePos, target.pos);
-    if (incomingDir !== target.rot || inserterState.holding !== null) {
+    if (!isInsertDirectionValid(source, target) || inserterState.holding !== null) {
       return false;
     }
+
+    if (source.kind === "belt" && sourceTick !== undefined) {
+      inserterState.skipDropAtTick = sourceTick;
+    }
+
     inserterState.holding = item;
     inserterState.state = 1;
     return true;
@@ -410,12 +472,13 @@ const transferToCell = (
   targetPos: GridCoord,
   item: ItemKind,
 ): boolean => {
+  const sourceTick = compareSimTick(sim);
   const candidates = getEntitiesAt(sim, targetPos);
   for (const candidate of candidates) {
     if (candidate.id === from.id) {
       continue;
     }
-    if (tryAcceptItem(candidate, item, from.pos)) {
+    if (tryAcceptItem(candidate, item, from, sourceTick)) {
       return true;
     }
   }
@@ -444,34 +507,7 @@ const canTransferToBeltTarget = (
     return true;
   }
 
-  if (target.kind === "inserter") {
-    const inserterState = ensureInserterState(target);
-    const incomingDirection = directionFromTo(source.pos, target.pos);
-    if (incomingDirection !== target.rot || inserterState.holding !== null) {
-      return false;
-    }
-    return true;
-  }
-
-  if (canAcceptViaMethod(target.state, item)) {
-    return true;
-  }
-
-  if (canAcceptViaMethod(target, item)) {
-    return true;
-  }
-
-  if (target.kind !== "furnace" || !isRecord(target.state)) {
-    return false;
-  }
-
-  if (item !== "iron-ore") {
-    return false;
-  }
-
-  const input = target.state.input;
-  const inputOccupied = target.state.inputOccupied;
-  return (input === null || input === undefined) && inputOccupied !== true;
+  return canAcceptDirectly(source, target, item);
 };
 
 const chooseBeltTransferTarget = (
@@ -515,9 +551,12 @@ const chooseBeltTransferTarget = (
   return null;
 };
 
-const buildBeltTransferPlans = (sim: SimLike, entities: ReadonlyArray<EntityBase>): BeltTransferPlan[] => {
+const buildBeltTransferPlans = (
+  sim: SimLike,
+  entities: ReadonlyArray<EntityBase>,
+  reservedTargetIds: Set<string>,
+): BeltTransferPlan[] => {
   const plans: BeltTransferPlan[] = [];
-  const reservedTargetIds = new Set<string>();
   const resolutions = new Map<string, BeltTransferResolution>();
 
   for (const source of entities) {
@@ -546,7 +585,10 @@ const buildBeltTransferPlans = (sim: SimLike, entities: ReadonlyArray<EntityBase
   return plans;
 };
 
-const commitBeltTransferPlans = (plans: ReadonlyArray<BeltTransferPlan>): void => {
+const commitBeltTransferPlans = (
+  sim: SimLike,
+  plans: ReadonlyArray<BeltTransferPlan>,
+): void => {
   for (const plan of plans) {
     const sourceState = ensureBeltState(plan.source);
     if (sourceState.item !== plan.item) {
@@ -558,7 +600,7 @@ const commitBeltTransferPlans = (plans: ReadonlyArray<BeltTransferPlan>): void =
   }
 
   for (const plan of plans) {
-    if (tryAcceptItem(plan.target, plan.item, plan.source.pos)) {
+    if (tryAcceptItem(plan.target, plan.item, plan.source, compareSimTick(sim))) {
       continue;
     }
 
@@ -599,13 +641,44 @@ const tickMinerEntity = (entity: EntityBase, _dtMs: number, sim: SimLike): void 
   state.output = emitted ? "iron-ore" : null;
 };
 
-const tickBeltEntities = (entities: ReadonlyArray<EntityBase>, sim: SimLike): void => {
-  const plans = buildBeltTransferPlans(sim, entities);
+const collectInserterDropReservations = (
+  sim: SimLike,
+  inserters: ReadonlyArray<EntityBase>,
+): Set<string> => {
+  const reserved = new Set<string>();
+  for (const inserter of inserters) {
+    const state = ensureInserterState(inserter);
+    if (state.holding === null) {
+      continue;
+    }
+
+    const target = resolveDirectTransportTarget(
+      sim,
+      inserter,
+      state.holding,
+      move(inserter.pos, inserter.rot),
+    );
+    if (target === null) {
+      continue;
+    }
+
+    reserved.add(target.id);
+  }
+
+  return reserved;
+};
+
+const tickBeltEntities = (
+  entities: ReadonlyArray<EntityBase>,
+  sim: SimLike,
+  reservedTargetIds: Set<string>,
+): void => {
+  const plans = buildBeltTransferPlans(sim, entities, new Set(reservedTargetIds));
   if (plans.length === 0) {
     return;
   }
 
-  commitBeltTransferPlans(plans);
+  commitBeltTransferPlans(sim, plans);
 };
 
 const tickInserterEntity = (entity: EntityBase, _dtMs: number, sim: SimLike): void => {
@@ -620,6 +693,18 @@ const tickInserterEntity = (entity: EntityBase, _dtMs: number, sim: SimLike): vo
   const dropPos = move(entity.pos, entity.rot);
 
   if (state.holding !== null) {
+    if (state.skipDropAtTick !== undefined) {
+      const currentTick = compareSimTick(sim);
+      if (state.skipDropAtTick === currentTick) {
+        state.skipDropAtTick = undefined;
+        return;
+      }
+
+      if (state.skipDropAtTick < currentTick) {
+        state.skipDropAtTick = undefined;
+      }
+    }
+
     if (transferToCell(sim, entity, dropPos, state.holding)) {
       state.holding = null;
       state.state = 3;
@@ -662,6 +747,7 @@ const tickFurnaceEntity = (entity: EntityBase, dtMs: number): void => {
 const runCanonicalTick = (sim: SimLike, dtMs: number): void => {
   const grouped = canonicalEntitiesByKind(sim);
   const orderedKinds = CANONICAL_TICK_PHASES;
+  const inserterDropReservations = collectInserterDropReservations(sim, grouped.inserter);
 
   for (const kind of orderedKinds) {
     const entities = grouped[kind];
@@ -673,7 +759,7 @@ const runCanonicalTick = (sim: SimLike, dtMs: number): void => {
     }
 
     if (kind === "belt") {
-      tickBeltEntities(entities, sim);
+      tickBeltEntities(entities, sim, inserterDropReservations);
       continue;
     }
 
