@@ -181,6 +181,28 @@ const runFixedTickSnapshot = (seed: number) => {
   return { first, second };
 };
 
+type MutableSnapshotProbeSim = {
+  width: number;
+  height: number;
+  tileSize: number;
+  tick: number;
+  tickCount: number;
+  elapsedMs: number;
+  getAllEntities: () => [];
+};
+
+const createMonotonicityProbeSim = (): MutableSnapshotProbeSim => {
+  return {
+    width: 12,
+    height: 8,
+    tileSize: 16,
+    tick: 3,
+    tickCount: 3,
+    elapsedMs: 250,
+    getAllEntities: () => [],
+  };
+};
+
 describe("createSnapshot", () => {
   it("returns empty shape for an empty simulation", () => {
     const sim = createSim({ width: 12, height: 9, seed: 7 });
@@ -445,6 +467,85 @@ describe("createSnapshot", () => {
     expect(boundarySnapshot.time.tick).toBe(4);
     expect(boundarySnapshot.time.tickCount).toBe(4);
     expect(boundarySnapshot.time.elapsedMs).toBe(152.5);
+  });
+
+  it("keeps snapshot timing monotonic on repeated reads even if sim timing regresses", () => {
+    const sim = createMonotonicityProbeSim();
+
+    const first = createSnapshot(sim);
+    expect(first.time).toEqual({
+      tick: 3,
+      tickCount: 3,
+      elapsedMs: 250,
+    });
+
+    sim.tick = 5;
+    sim.tickCount = 5;
+    sim.elapsedMs = 420;
+    const second = createSnapshot(sim);
+    expect(second.time).toEqual({
+      tick: 5,
+      tickCount: 5,
+      elapsedMs: 420,
+    });
+
+    sim.tick = 2;
+    sim.tickCount = 4;
+    sim.elapsedMs = 300;
+    const third = createSnapshot(sim);
+    expect(third.time).toEqual({
+      tick: 5,
+      tickCount: 5,
+      elapsedMs: 420,
+    });
+
+    sim.tick = 6;
+    sim.tickCount = 7;
+    sim.elapsedMs = 410;
+    const fourth = createSnapshot(sim);
+    expect(fourth.time).toEqual({
+      tick: 6,
+      tickCount: 7,
+      elapsedMs: 420,
+    });
+  });
+
+  it("keeps snapshot payload stable while paused and resumes after the next committed tick", () => {
+    ensureBeltDefinition();
+
+    const sim = createSim({ width: 12, height: 8, seed: 101 });
+    sim.addEntity({
+      kind: "belt",
+      pos: { x: 1, y: 1 },
+      rot: "E",
+    });
+
+    const snapshotNow = (): ReturnType<typeof createSnapshot> => createSnapshot({
+      ...sim,
+      width: 12,
+      height: 8,
+      tileSize: 16,
+    });
+
+    progress(sim, 1);
+    const running = snapshotNow();
+    const runningItems = running.entities[0].items;
+
+    sim.pause();
+    sim.step(10);
+    sim.step(10);
+    const paused = snapshotNow();
+    const pausedAgain = snapshotNow();
+
+    expect(paused.time).toEqual(running.time);
+    expect(paused).toEqual(running);
+    expect(pausedAgain).toEqual(paused);
+
+    sim.resume();
+    progress(sim, 2);
+    const resumed = snapshotNow();
+    expect(resumed.time.tick).toBe(running.time.tick + 2);
+    expect(resumed.entities[0].items).not.toEqual(runningItems);
   });
 
   it("replays deterministic display data for a fixed tick sequence", () => {

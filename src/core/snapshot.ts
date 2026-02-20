@@ -63,6 +63,14 @@ type SnapshotInserterState = "idle" | "pickup" | "swing" | "drop";
 
 const DEFAULT_TILE_SIZE = 32;
 
+type SnapshotPublicationState = {
+  tick: number;
+  tickCount: number;
+  elapsedMs: number;
+};
+
+const snapshotStateBySim = new WeakMap<object, SnapshotPublicationState>();
+
 const clampCounter = (value: unknown): number => {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return 0;
@@ -78,6 +86,41 @@ const clampBoundaryCounter = (value: unknown): number => {
 
   const floored = Math.floor(value);
   return floored < 0 ? 0 : floored;
+};
+
+const asCommittedTiming = (
+  sim: SnapshotSim,
+  proposedTick: number,
+  proposedTickCount: number,
+  proposedElapsedMs: number,
+): SnapshotTiming => {
+  if (!isObject(sim)) {
+    return {
+      tick: proposedTick,
+      tickCount: proposedTickCount,
+      elapsedMs: proposedElapsedMs,
+    };
+  }
+
+  const previous = snapshotStateBySim.get(sim);
+  if (previous === undefined) {
+    const initialState = {
+      tick: proposedTick,
+      tickCount: proposedTickCount,
+      elapsedMs: proposedElapsedMs,
+    };
+    snapshotStateBySim.set(sim, initialState);
+    return initialState;
+  }
+
+  const committedTiming: SnapshotTiming = {
+    tick: proposedTick < previous.tick ? previous.tick : proposedTick,
+    tickCount: proposedTickCount < previous.tickCount ? previous.tickCount : proposedTickCount,
+    elapsedMs: proposedElapsedMs < previous.elapsedMs ? previous.elapsedMs : proposedElapsedMs,
+  };
+
+  snapshotStateBySim.set(sim, committedTiming);
+  return committedTiming;
 };
 
 const isObject = (value: unknown): value is SnapshotState => {
@@ -396,6 +439,7 @@ export const createSnapshot = (sim: SnapshotSim): Snapshot => {
   const tileSize = typeof sim.tileSize === "number" && Number.isFinite(sim.tileSize)
     ? sim.tileSize
     : DEFAULT_TILE_SIZE;
+  const timing = asCommittedTiming(sim, tick, tickCount, elapsedMs);
 
   const ore = map === undefined ? [] : createOreList(map);
   const entities = sim.getAllEntities?.() ?? [];
@@ -407,9 +451,9 @@ export const createSnapshot = (sim: SnapshotSim): Snapshot => {
       tileSize,
     },
     time: {
-      tick,
-      elapsedMs,
-      tickCount,
+      tick: timing.tick,
+      elapsedMs: timing.elapsedMs,
+      tickCount: timing.tickCount,
     },
     ore,
     entities: entities.map(createEntitySnapshot),
