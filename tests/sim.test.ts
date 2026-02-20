@@ -914,6 +914,180 @@ describe("simulation registry and loop", () => {
     expect(furnaceState).toMatchObject({ crafting: false, output: "iron-plate", completed: 1 });
   });
 
+  test("keeps first cadence boundary item in middle tile for same-tick relay chains", () => {
+    const sourceKind = nextKind("pipeline-source-regression");
+    const middleKind = nextKind("pipeline-middle-regression");
+    const sinkKind = nextKind("pipeline-sink-regression");
+    const cadence = CHAIN_BELT_ATTEMPTS;
+
+    type PipelineSourceState = {
+      ticks: number;
+      holding: ItemKind | null;
+      moved: number;
+    };
+
+    type PipelineMiddleState = {
+      ticks: number;
+      holding: ItemKind | null;
+      relayed: number;
+    };
+
+    type PipelineSinkState = {
+      ticks: number;
+      holding: ItemKind | null;
+      received: number;
+    };
+
+    registerEntity(sourceKind, {
+      create: () => ({
+        ticks: 0,
+        holding: "iron-ore" as ItemKind | null,
+        moved: 0,
+      }),
+      update: (entity, _dtMs, sim) => {
+        const state = asState<PipelineSourceState>(entity.state);
+        if (state === undefined) {
+          return;
+        }
+
+        state.ticks += 1;
+        if (state.ticks % cadence !== 0) {
+          return;
+        }
+
+        if (state.holding === null) {
+          return;
+        }
+
+        const destination = add(entity.pos, offsetFrom(entity.rot));
+        const middle = findKindAt(sim, destination, middleKind);
+        const middleState = asState<PipelineMiddleState>(middle?.state);
+        if (middleState === undefined || middleState.holding !== null) {
+          return;
+        }
+
+        middleState.holding = state.holding;
+        state.holding = null;
+        state.moved += 1;
+      },
+    });
+
+    registerEntity(middleKind, {
+      create: () => ({
+        ticks: 0,
+        holding: null as ItemKind | null,
+        relayed: 0,
+      }),
+      update: (entity, _dtMs, sim) => {
+        const state = asState<PipelineMiddleState>(entity.state);
+        if (state === undefined) {
+          return;
+        }
+
+        state.ticks += 1;
+        if (state.ticks % cadence !== 0) {
+          return;
+        }
+
+        if (state.holding === null) {
+          return;
+        }
+
+        const destination = add(entity.pos, offsetFrom(entity.rot));
+        const sink = findKindAt(sim, destination, sinkKind);
+        const sinkState = asState<PipelineSinkState>(sink?.state);
+
+        if (sinkState === undefined || sinkState.holding !== null) {
+          return;
+        }
+
+        sinkState.holding = state.holding;
+        state.holding = null;
+        state.relayed += 1;
+      },
+    });
+
+    registerEntity(sinkKind, {
+      create: () => ({
+        ticks: 0,
+        holding: null as ItemKind | null,
+        received: 0,
+      }),
+      update: (entity) => {
+        const state = asState<PipelineSinkState>(entity.state);
+        if (state === undefined) {
+          return;
+        }
+
+        state.ticks += 1;
+      },
+    });
+
+    const sim = createSim({ width: 10, height: 3, seed: 33 });
+    const sourceId = sim.addEntity({ kind: sourceKind, pos: { x: 1, y: 1 }, rot: "E" });
+    const middleId = sim.addEntity({ kind: middleKind, pos: { x: 2, y: 1 }, rot: "E" });
+    const sinkId = sim.addEntity({ kind: sinkKind, pos: { x: 3, y: 1 }, rot: "E" });
+
+    const sourceEntity = sim.getEntityById(sourceId);
+    const middleEntity = sim.getEntityById(middleId);
+    const sinkEntity = sim.getEntityById(sinkId);
+
+    if (sourceEntity?.state === undefined || middleEntity?.state === undefined || sinkEntity?.state === undefined) {
+      throw new Error("Expected all pipeline entities to have states");
+    }
+
+    const sourceState = asState<PipelineSourceState>(sourceEntity.state);
+    const middleState = asState<PipelineMiddleState>(middleEntity.state);
+    const sinkState = asState<PipelineSinkState>(sinkEntity.state);
+
+    if (sourceState === undefined || middleState === undefined || sinkState === undefined) {
+      throw new Error("Expected pipeline entity states to be typed");
+    }
+
+    const tickMs = 1000 / 60;
+    const stepTicks = (ticks: number): void => {
+      for (let i = 0; i < ticks; i += 1) {
+        sim.step(tickMs);
+      }
+    };
+
+    stepTicks(14);
+    expect(sim.tickCount).toBe(14);
+    expect(sourceState).toMatchObject({
+      ticks: 14,
+      holding: "iron-ore",
+      moved: 0,
+    });
+    expect(middleState).toMatchObject({
+      ticks: 14,
+      holding: null,
+      relayed: 0,
+    });
+    expect(sinkState).toMatchObject({
+      ticks: 14,
+      holding: null,
+      received: 0,
+    });
+
+    stepTicks(1);
+    expect(sim.tickCount).toBe(15);
+    expect(sourceState).toMatchObject({
+      ticks: 15,
+      holding: null,
+      moved: 1,
+    });
+    expect(middleState).toMatchObject({
+      ticks: 15,
+      holding: "iron-ore",
+      relayed: 0,
+    });
+    expect(sinkState).toMatchObject({
+      ticks: 15,
+      holding: null,
+      received: 0,
+    });
+  });
+
   test("halts chain movement during pause and preserves cadence phase offsets on resume", () => {
     ensureChainCadenceDefinitions();
 
