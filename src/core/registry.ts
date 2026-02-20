@@ -3,7 +3,7 @@ import type { EntityBase, EntityKind } from './types';
 export type RegisteredEntityKind = EntityKind | (string & {});
 
 type EntityDefinition = {
-  create(init: any, sim: unknown): { state?: unknown } | void;
+  create(init: any, sim: unknown): unknown;
   update(entity: EntityBase, dtMs: number, sim: unknown): void;
 };
 
