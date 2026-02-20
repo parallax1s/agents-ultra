@@ -700,7 +700,7 @@ describe("createSnapshot", () => {
     });
   });
 
-  it("keeps snapshot payload stable while paused and resumes after the next committed tick", () => {
+  it("keeps committed snapshot/world state stable while paused and resumes on exact tick boundaries", () => {
     ensureBeltDefinition();
 
     const sim = createSim({ width: 12, height: 8, seed: 101 });
@@ -717,25 +717,47 @@ describe("createSnapshot", () => {
       tileSize: 16,
     });
 
-    progress(sim, 1);
-    const running = snapshotNow();
-    const runningItems = running.entities[0].items;
+    const committedWorldSnapshot = sim.getAllEntities();
+    const beforePause = snapshotNow();
+    expect(beforePause.time).toEqual({
+      tick: 0,
+      tickCount: 0,
+      elapsedMs: 0,
+    });
+    expect(beforePause.entities[0].items).toEqual([null, "iron-ore", null] as ReadonlyArray<ItemKind | null>);
 
+    sim.step(TICK_MS / 2);
     sim.pause();
-    sim.step(10);
-    sim.step(10);
+    sim.step(TICK_MS * 9);
+    sim.step(TICK_MS / 3);
+    sim.step((7 * TICK_MS) / 4);
     const paused = snapshotNow();
     const pausedAgain = snapshotNow();
 
-    expect(paused.time).toEqual(running.time);
-    expect(paused).toEqual(running);
+    expect(sim.getAllEntities()).toEqual(committedWorldSnapshot);
+    expect(paused).toEqual(beforePause);
     expect(pausedAgain).toEqual(paused);
+    expect(paused.time).toEqual(beforePause.time);
 
     sim.resume();
-    progress(sim, 2);
-    const resumed = snapshotNow();
-    expect(resumed.time.tick).toBe(running.time.tick + 2);
-    expect(resumed.entities[0].items).not.toEqual(runningItems);
+    sim.step(TICK_MS / 4);
+    const resumedPreBoundary = snapshotNow();
+    expect(resumedPreBoundary).toEqual(beforePause);
+    expect(sim.getAllEntities()).toEqual(committedWorldSnapshot);
+
+    sim.step(TICK_MS / 4);
+    const resumedFirstBoundary = snapshotNow();
+    expect(resumedFirstBoundary.time.tick).toBe(beforePause.time.tick + 1);
+    expect(resumedFirstBoundary.time.tickCount).toBe(beforePause.time.tickCount + 1);
+    expect(resumedFirstBoundary.time.elapsedMs).toBeCloseTo(beforePause.time.elapsedMs + TICK_MS);
+    expect(resumedFirstBoundary.entities[0].items).toEqual(["iron-ore", null, null] as ReadonlyArray<ItemKind | null>);
+
+    sim.step(TICK_MS);
+    const resumedSecondBoundary = snapshotNow();
+    expect(resumedSecondBoundary.time.tick).toBe(beforePause.time.tick + 2);
+    expect(resumedSecondBoundary.time.tickCount).toBe(beforePause.time.tickCount + 2);
+    expect(resumedSecondBoundary.time.elapsedMs).toBeCloseTo(beforePause.time.elapsedMs + TICK_MS * 2);
+    expect(resumedSecondBoundary.entities[0].items).toEqual([null, null, "iron-ore"] as ReadonlyArray<ItemKind | null>);
   });
 
   it("replays deterministic display data for a fixed tick sequence", () => {
