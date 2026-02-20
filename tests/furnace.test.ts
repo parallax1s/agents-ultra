@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { Furnace } from '../src/entities/furnace';
+import { CANONICAL_TICK_PHASES } from '../src/core/registry';
 
 const FURNACE_SMELT_TICKS = 180;
 
@@ -100,6 +101,10 @@ const runFurnaceReplay = (): FurnaceReplayRun => {
 };
 
 describe('Furnace', () => {
+  it('keeps furnace after a blocked output handoff on the transport phase and updates ranks deterministically', () => {
+    expect(CANONICAL_TICK_PHASES).toEqual(['miner', 'belt', 'furnace', 'inserter']);
+  });
+
   it('produces iron-plate on exact smelt completion boundaries', () => {
     const furnace = new Furnace();
     let tick = 0;

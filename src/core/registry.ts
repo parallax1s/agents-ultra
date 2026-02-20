@@ -1,14 +1,14 @@
 import type { EntityBase, EntityKind } from './types';
 
 export type RegisteredEntityKind = EntityKind | (string & {});
-export const CANONICAL_TICK_PHASES = ["miner", "belt", "inserter", "furnace"] as const;
+export const CANONICAL_TICK_PHASES = ["miner", "belt", "furnace", "inserter"] as const;
 export type CanonicalTickPhase = (typeof CANONICAL_TICK_PHASES)[number];
 
 const tickPhaseRank: Record<CanonicalTickPhase, number> = {
   miner: 0,
   belt: 1,
-  inserter: 2,
-  furnace: 3,
+  furnace: 2,
+  inserter: 3,
 };
 
 type EntityDefinition = {
