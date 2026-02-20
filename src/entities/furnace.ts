@@ -85,6 +85,10 @@ export class Furnace {
   }
 
   get progress01(): number {
+    if (this.output !== null) {
+      return 1;
+    }
+
     if (!this.crafting) {
       return 0;
     }
