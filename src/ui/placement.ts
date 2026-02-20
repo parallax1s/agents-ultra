@@ -101,6 +101,32 @@ type InternalState = {
   canPlace: boolean;
 };
 
+type GridBounds = {
+  cols: number;
+  rows: number;
+};
+
+function inBounds(tile: Tile, bounds: GridBounds): boolean {
+  return tile.x >= 0 && tile.y >= 0 && tile.x < bounds.cols && tile.y < bounds.rows;
+}
+
+function getGridBounds(sim: Simulation, opts?: { cols?: number; rows?: number }): GridBounds | null {
+  if (opts?.cols !== undefined && opts?.rows !== undefined && Number.isInteger(opts.cols) && opts.cols > 0 && Number.isInteger(opts.rows) && opts.rows > 0) {
+    return { cols: opts.cols, rows: opts.rows };
+  }
+
+  const width = (sim as { width?: unknown }).width;
+  const height = (sim as { height?: unknown }).height;
+  if (
+    typeof width === "number" && Number.isInteger(width) && width > 0
+    && typeof height === "number" && Number.isInteger(height) && height > 0
+  ) {
+    return { cols: width, rows: height };
+  }
+
+  return null;
+}
+
 function cloneTile(tile: Tile): Tile {
   return { x: tile.x, y: tile.y };
 }
@@ -133,8 +159,9 @@ function canControllerRemoveTile(
  */
 export function createPlacementController(
   sim: Simulation,
-  opts?: { initialKind?: EntityKind; initialRotation?: Rotation },
+  opts?: { initialKind?: EntityKind; initialRotation?: Rotation; cols?: number; rows?: number },
 ): PlacementController {
+  const bounds = getGridBounds(sim, opts);
   const state: InternalState = {
     selectedKind: opts?.initialKind ?? null,
     rotation: opts?.initialRotation ?? 0,
@@ -144,6 +171,11 @@ export function createPlacementController(
 
   const recomputeCanPlace = (): void => {
     if (state.selectedKind === null || state.cursor === null) {
+      state.canPlace = false;
+      return;
+    }
+
+    if (bounds !== null && !inBounds(state.cursor, bounds)) {
       state.canPlace = false;
       return;
     }
@@ -172,12 +204,23 @@ export function createPlacementController(
     },
 
     setCursor(tile: Tile | null): void {
-      state.cursor = tile === null ? null : cloneTile(tile);
+      if (tile === null || (bounds !== null && !inBounds(tile, bounds))) {
+        state.cursor = null;
+        state.canPlace = false;
+        return;
+      }
+
+      state.cursor = cloneTile(tile);
       recomputeCanPlace();
     },
 
     clickLMB(): void {
       if (state.selectedKind === null || state.cursor === null) {
+        return;
+      }
+
+      if (bounds !== null && !inBounds(state.cursor, bounds)) {
+        state.canPlace = false;
         return;
       }
 
@@ -192,6 +235,11 @@ export function createPlacementController(
 
     clickRMB(): void {
       if (state.cursor === null) {
+        return;
+      }
+
+      if (bounds !== null && !inBounds(state.cursor, bounds)) {
+        state.canPlace = false;
         return;
       }
 
