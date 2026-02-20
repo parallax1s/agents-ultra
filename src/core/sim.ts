@@ -1,4 +1,8 @@
-import { getDefinition } from "./registry";
+import {
+  getCanonicalKindRank,
+  getDefinition,
+  SIM_TICK_CADENCE_MS,
+} from "./registry";
 import type {
   Direction,
   EntityBase,
@@ -21,7 +25,7 @@ type EntityDescriptor = {
   kind: EntityKind | (string & {});
 } & EntityInit;
 
-const TICK_MS = 1000 / 60;
+const getCanonicalTickRank = getCanonicalKindRank;
 const STEP_EPSILON = 1e-7;
 const DEFAULT_ROTATION: Direction = "N";
 const DEFAULT_WORLD_WIDTH = 64;
@@ -96,12 +100,14 @@ export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
   const publicCellKeyById = new Map<string, string>();
 
   let nextEntityId = 1;
+  let nextEntityInsertionOrder = 0;
   let accumulatorMs = 0;
   let paused = false;
   let tick = 0;
   let tickCount = 0;
   let elapsedMs = 0;
   let runningStep = false;
+  const insertionOrderById = new Map<string, number>();
 
   type CellIndex = {
     readonly entitiesByCell: Map<string, Set<string>>;
@@ -289,6 +295,8 @@ export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
 
     const id = String(nextEntityId);
     nextEntityId += 1;
+    insertionOrderById.set(id, nextEntityInsertionOrder);
+    nextEntityInsertionOrder += 1;
 
     const createdState =
       typeof definition.create === "function"
@@ -330,7 +338,35 @@ export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
   const runTick = (): void => {
     runningStep = true;
     try {
-      const ids = Array.from(entitiesById.keys());
+      const ids = Array.from(entitiesById.keys()).sort((leftId, rightId) => {
+        const leftEntity = entitiesById.get(leftId);
+        const rightEntity = entitiesById.get(rightId);
+        if (leftEntity === undefined || rightEntity === undefined) {
+          return 0;
+        }
+
+        const phaseRankDiff =
+          getCanonicalTickRank(leftEntity.kind) - getCanonicalTickRank(rightEntity.kind);
+        if (phaseRankDiff !== 0) {
+          return phaseRankDiff;
+        }
+
+        const leftOrder = insertionOrderById.get(leftId);
+        const rightOrder = insertionOrderById.get(rightId);
+        if (leftOrder === rightOrder) {
+          return 0;
+        }
+
+        if (leftOrder === undefined) {
+          return 1;
+        }
+
+        if (rightOrder === undefined) {
+          return -1;
+        }
+
+        return leftOrder - rightOrder;
+      });
       const updateContext = {
         width: worldWidth,
         height: worldHeight,
@@ -355,7 +391,7 @@ export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
         }
 
         const previousPos = { x: entity.pos.x, y: entity.pos.y };
-        definition.update(entity, TICK_MS, updateContext);
+        definition.update(entity, SIM_TICK_CADENCE_MS, updateContext);
 
         if (
           entitiesById.has(id) &&
@@ -370,7 +406,7 @@ export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
 
       tick += 1;
       tickCount += 1;
-      elapsedMs += TICK_MS;
+      elapsedMs += SIM_TICK_CADENCE_MS;
       publishPublicState();
     } finally {
       runningStep = false;
@@ -387,12 +423,12 @@ export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
     }
 
     accumulatorMs += dtMs;
-    const stepsToRun = Math.floor((accumulatorMs + STEP_EPSILON) / TICK_MS);
+    const stepsToRun = Math.floor((accumulatorMs + STEP_EPSILON) / SIM_TICK_CADENCE_MS);
     if (stepsToRun <= 0) {
       return;
     }
 
-    accumulatorMs -= stepsToRun * TICK_MS;
+    accumulatorMs -= stepsToRun * SIM_TICK_CADENCE_MS;
 
     for (let stepIndex = 0; stepIndex < stepsToRun; stepIndex += 1) {
       runTick();

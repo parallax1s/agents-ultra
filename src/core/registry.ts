@@ -4,12 +4,22 @@ export type RegisteredEntityKind = EntityKind | (string & {});
 export const CANONICAL_TICK_PHASES = ["miner", "belt", "furnace", "inserter"] as const;
 export type CanonicalTickPhase = (typeof CANONICAL_TICK_PHASES)[number];
 
-const tickPhaseRank: Record<CanonicalTickPhase, number> = {
-  miner: 0,
-  belt: 1,
-  furnace: 2,
-  inserter: 3,
-};
+export const SIM_TICK_CADENCE_MS = 1000 / 60;
+
+export const CANONICAL_TICK_PHASE_CADENCE_TICKS = {
+  miner: 60,
+  belt: 15,
+  furnace: 180,
+  inserter: 20,
+} as const satisfies Record<CanonicalTickPhase, number>;
+
+const tickPhaseRank = CANONICAL_TICK_PHASES.reduce(
+  (acc, phase, rank): Record<CanonicalTickPhase, number> => {
+    acc[phase] = rank;
+    return acc;
+  },
+  {} as Record<CanonicalTickPhase, number>,
+);
 
 type EntityDefinition = {
   create(init: any, sim: unknown): unknown;
