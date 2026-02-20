@@ -9,7 +9,7 @@
 */
 
 import { createSnapshot, type Snapshot } from "../core/snapshot";
-import type { Direction, EntityKind } from "../core/types";
+import type { Direction, EntityKind, ItemKind } from "../core/types";
 
 type Tile = { x: number; y: number };
 
@@ -137,7 +137,14 @@ function drawMiner(ctx: CanvasRenderingContext2D, x: number, y: number, rot: Dir
   ctx.restore();
 }
 
-function drawBelt(ctx: CanvasRenderingContext2D, x: number, y: number, rot: Direction, itemHint: unknown, t: Transform, timeTick: number): void {
+function drawBelt(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  rot: Direction,
+  itemHint: ReadonlyArray<ItemKind | null> | undefined,
+  t: Transform,
+): void {
   // Base belt body
   const px = t.offsetX + x * t.tileRender;
   const py = t.offsetY + y * t.tileRender;
@@ -159,13 +166,11 @@ function drawBelt(ctx: CanvasRenderingContext2D, x: number, y: number, rot: Dire
   ctx.closePath();
   ctx.fill();
 
-  // Items on belt (read from light state via parseBeltItems)
+  // Items on belt (read from committed snapshot slot list)
   const items = parseBeltItems(itemHint);
-  const defaultPhase = (timeTick % 15) / 15; // 0..1 fallback motion
   for (const it of items) {
     const color = it.kind === "iron-ore" ? ITEM_ORE : it.kind === "iron-plate" ? ITEM_PLATE : ITEM_GENERIC;
-    const phase = Number.isFinite(it.pos) ? it.pos : defaultPhase;
-    const ix = -t.tileRender * 0.25 + phase * (t.tileRender * 0.5);
+    const ix = -t.tileRender * 0.25 + it.pos * (t.tileRender * 0.5);
     ctx.fillStyle = color;
     ctx.beginPath();
     ctx.arc(ix, 0, Math.max(2, t.tileRender * 0.08), 0, Math.PI * 2);
@@ -175,7 +180,15 @@ function drawBelt(ctx: CanvasRenderingContext2D, x: number, y: number, rot: Dire
   ctx.restore();
 }
 
-function drawInserter(ctx: CanvasRenderingContext2D, x: number, y: number, rot: Direction, state: unknown, t: Transform, timeTick: number): void {
+function drawInserter(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  rot: Direction,
+  state: InserterState | undefined,
+  t: Transform,
+  timeTick: number,
+): void {
   const baseX = t.offsetX + (x + 0.5) * t.tileRender;
   const baseY = t.offsetY + (y + 0.5) * t.tileRender;
   ctx.save();
@@ -224,102 +237,45 @@ function clamp01(n: number): number {
   return n;
 }
 
-function getNumeric(value: unknown, min: number, max: number): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    if (value < min) return min;
-    if (value > max) return max;
-    return value;
+type InserterState = "idle" | "pickup" | "swing" | "drop";
+
+type BeltItem = {
+  kind: ItemKind;
+  pos: number;
+};
+
+function parseBeltItems(items: ReadonlyArray<ItemKind | null> | undefined): BeltItem[] {
+  if (items === undefined) {
+    return [];
   }
-  return null;
+
+  const result: BeltItem[] = [];
+  const denom = Math.max(1, items.length);
+
+  for (let index = 0; index < items.length; index += 1) {
+    const itemKind = items[index];
+    if (itemKind !== "iron-ore" && itemKind !== "iron-plate") {
+      continue;
+    }
+
+    result.push({
+      kind: itemKind,
+      pos: clamp01((index + 0.5) / denom),
+    });
+  }
+
+  return result;
 }
 
-type BeltItem = { kind: "iron-ore" | "iron-plate" | "generic"; pos: number };
-
-function parseBeltItems(light: unknown): BeltItem[] {
-  const items: BeltItem[] = [];
-  const push = (kind: string, pos: number | null): void => {
-    const k = kind === "iron-ore" || kind === "iron-plate" ? (kind as BeltItem["kind"]) : "generic";
-    const p = pos === null ? 0.5 : clamp01(pos);
-    items.push({ kind: k, pos: p });
-  };
-
-  if (typeof light === "string") {
-    push(light, 0.5);
-    return items;
-  }
-
-  if (typeof light === "boolean") {
-    if (light) items.push({ kind: "generic", pos: 0.5 });
-    return items;
-  }
-
-  if (typeof light !== "object" || light === null) {
-    return items;
-  }
-
-  const obj = light as Record<string, unknown>;
-
-  if (typeof obj.item === "string") {
-    push(obj.item, typeof obj.pos === "number" ? obj.pos : typeof obj.p === "number" ? obj.p : 0.5);
-    return items;
-  }
-
-  if (Array.isArray(obj.items)) {
-    const arr = obj.items as unknown[];
-    // Shape A: ["iron-ore", "iron-plate"]
-    if (arr.every((v) => typeof v === "string")) {
-      const n = Math.max(1, arr.length);
-      arr.forEach((k, i) => push(k as string, (i + 0.5) / n));
-      return items;
-    }
-    // Shape B: [{ kind: "iron-ore", pos: 0.2 }]
-    for (const v of arr) {
-      if (typeof v === "object" && v !== null) {
-        const it = v as Record<string, unknown>;
-        if (typeof it.kind === "string") {
-          const pos = typeof it.pos === "number" ? it.pos : typeof it.p === "number" ? it.p : null;
-          push(it.kind, pos);
-        }
-      }
-    }
-  }
-
-  // Shape C: { slotIndex, slotCount, slotKind }
-  const idx = typeof obj.slotIndex === "number" ? obj.slotIndex : undefined;
-  const cnt = typeof obj.slotCount === "number" ? obj.slotCount : undefined;
-  if (idx !== undefined && cnt && cnt > 0 && typeof obj.slotKind === "string") {
-    push(obj.slotKind, (idx + 0.5) / cnt);
-  }
-
-  return items;
+function parseInserterPhase(state: InserterState | undefined, tick: number): number {
+  const base = state === "pickup" ? 0.2 : state === "swing" ? 0.5 : state === "drop" ? 0.8 : 0.15;
+  const sweep = ((tick % 20) / 20 - 0.5) * 0.12;
+  return clamp01(base + sweep);
 }
 
-function parseInserterPhase(light: unknown, tick: number): number {
-  const fallback = (tick % 20) / 20;
-  if (typeof light === "number") return clamp01(light);
-  if (typeof light === "object" && light !== null) {
-    const o = light as Record<string, unknown>;
-    for (const key of ["phase", "t", "progress"]) {
-      const v = o[key];
-      if (typeof v === "number") return clamp01(v);
-    }
-    if (typeof o.angle === "number") {
-      const a = o.angle as number; // radians expected
-      const norm = ((a / (Math.PI * 2)) % 1 + 1) % 1;
-      return norm;
-    }
-  }
-  return fallback;
-}
-
-function parseFurnaceProgress(light: unknown): number | null {
-  if (typeof light === "number") return clamp01(light);
-  if (typeof light === "object" && light !== null) {
-    const o = light as Record<string, unknown>;
-    for (const key of ["progress", "t", "ratio"]) {
-      const v = o[key];
-      if (typeof v === "number") return clamp01(v);
-    }
+function parseFurnaceProgress(progress01: number | undefined): number | null {
+  if (typeof progress01 === "number") {
+    return clamp01(progress01);
   }
   return null;
 }
@@ -373,9 +329,9 @@ export function createRenderer(canvas: HTMLCanvasElement): RendererApi {
     // Canvas clearing
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const gridW = snapshot.grid.width || 0;
-    const gridH = snapshot.grid.height || 0;
-    const tile = snapshot.grid.tileSize || 32;
+    const gridW = snapshot.grid.width;
+    const gridH = snapshot.grid.height;
+    const tile = snapshot.grid.tileSize;
     if (gridW <= 0 || gridH <= 0) {
       scheduleNext();
       return;
@@ -394,13 +350,13 @@ export function createRenderer(canvas: HTMLCanvasElement): RendererApi {
           drawMiner(ctx, e.pos.x, e.pos.y, e.rot, t);
           break;
         case "belt":
-          drawBelt(ctx, e.pos.x, e.pos.y, e.rot, e.light, t, snapshot.time.tick);
+          drawBelt(ctx, e.pos.x, e.pos.y, e.rot, e.items, t);
           break;
         case "inserter":
-          drawInserter(ctx, e.pos.x, e.pos.y, e.rot, e.light, t, snapshot.time.tick);
+          drawInserter(ctx, e.pos.x, e.pos.y, e.rot, e.state, t, snapshot.time.tick);
           break;
         case "furnace": {
-          const progress = parseFurnaceProgress(e.light);
+          const progress = parseFurnaceProgress(e.progress01);
           drawFurnace(ctx, e.pos.x, e.pos.y, progress, t);
           break;
         }
