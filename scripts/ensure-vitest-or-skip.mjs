@@ -41,10 +41,26 @@ const localVitestCandidates = [
 
 const localVitestBinary = localVitestCandidates[0];
 
-const args = new Set(process.argv.slice(2));
-const skipIfMissing =
-  args.has('--skip') || args.has('--skip-if-missing') || process.env.VITEST_SKIP_IF_MISSING === '1';
-const strictMode = args.has('--strict') || !skipIfMissing;
+const rawArgs = process.argv.slice(2);
+const vitestArgs = [];
+let skipIfMissing = process.env.VITEST_SKIP_IF_MISSING === '1';
+let hasStrictFlag = false;
+
+for (const arg of rawArgs) {
+  if (arg === '--skip' || arg === '--skip-if-missing') {
+    skipIfMissing = true;
+    continue;
+  }
+
+  if (arg === '--strict') {
+    hasStrictFlag = true;
+    continue;
+  }
+
+  vitestArgs.push(arg);
+}
+
+const strictMode = hasStrictFlag || !skipIfMissing;
 
 const installInstructions = 'Install with: npm i -D vitest @vitest/coverage-v8 jsdom';
 const missingVitestMessage = localVitestCandidates.length === 0
@@ -71,7 +87,7 @@ if (!localVitestBinary) {
   process.exit(1);
 }
 
-const result = spawnSync(localVitestBinary, ['run'], {
+const result = spawnSync(localVitestBinary, ['run', ...vitestArgs], {
   stdio: 'inherit',
 });
 
