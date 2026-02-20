@@ -42,6 +42,23 @@ Use this mode for maintenance and local development. It keeps contributor loops 
 - Fixed-step behavior: the simulation must run at deterministic 60 TPS using fixed-step progression, independent of render frame timing.
 - Pause/resume expectation: pressing `Space` must freeze simulation state while paused and resume from the same state without losing or re-running ticks.
 
+## Movement Regression Verification
+
+Use this focused checklist before merging movement-related changes.
+
+### Movement invariants
+- No same-tick ingress + egress: a belt tile that receives from its source on a boundary tick must not forward to the next tile in the same tick.
+- Cadence boundaries only: miner, belt, inserter, and furnace movement only changes on their configured cadence ticks (e.g., 60/20/15/180 style progression), with no off-by-one drift.
+- Pause freeze: paused simulation must not advance tick, elapsed time, or world state; resume must continue from the exact prior phase.
+
+### Fast local verification targets
+1. `npm run typecheck`
+2. `npx vitest run tests/sim-compat.test.ts tests/pipeline.test.ts`
+3. `npx vitest run tests/sim-compat.test.ts -t "does not let a belt receive and forward on the same 15-tick boundary in single-hop chains"`
+4. `npx vitest run tests/sim-compat.test.ts -t "enforces exact miner->belt->inserter->furnace progression at 60/20/15/180 boundaries"`
+5. `npx vitest run tests/pipeline.test.ts -t "advances at most one belt tile per 15-tick cadence window"`
+6. `npx vitest run tests/pipeline.test.ts -t "halts transport movement while paused and resumes from the exact prior cadence phase"`
+
 ## Optional E2E (Playwright)
 ```bash
 npm i -D @playwright/test
