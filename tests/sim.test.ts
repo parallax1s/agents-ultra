@@ -48,6 +48,27 @@ const getUpdateCount = (value: unknown): number | undefined => {
   return typeof updates === "number" ? updates : undefined;
 };
 
+type WorldEntitySnapshot = {
+  id: string;
+  kind: string;
+  pos: { x: number; y: number };
+  rot: Direction;
+  state: unknown;
+};
+
+const snapshotWorld = (sim: ReturnType<typeof createSim>): WorldEntitySnapshot[] => {
+  return sim
+    .getAllEntities()
+    .map((entity) => ({
+      id: entity.id,
+      kind: String(entity.kind),
+      pos: { x: entity.pos.x, y: entity.pos.y },
+      rot: entity.rot,
+      state: entity.state === undefined ? undefined : structuredClone(entity.state),
+    }))
+    .sort((left, right) => Number(left.id) - Number(right.id));
+};
+
 type Listener = (event: unknown) => void;
 
 const createMockInputStage = () => {
@@ -279,6 +300,148 @@ describe("simulation registry and loop", () => {
     sim.step((tickMs * 3) / 4);
     expect(sim.tickCount).toBe(tickCountBeforePause + 1);
     expect(updateCalls).toBe(4);
+  });
+
+  test("produces identical ticks and world state for equal active elapsed time across chunk patterns", () => {
+    const kind = nextKind("miner-chunk-equivalence");
+    const tickMs = 1000 / 60;
+
+    registerEntity(kind, {
+      create: () => ({ updates: 0, checksum: 0 }),
+      update: (entity: unknown) => {
+        if (
+          typeof entity !== "object" ||
+          entity === null ||
+          !("state" in entity) ||
+          !("pos" in entity)
+        ) {
+          throw new Error("Unexpected entity shape passed to update");
+        }
+
+        const entityWithState = entity as {
+          state?: { updates?: number; checksum?: number };
+          pos: { x: number; y: number };
+        };
+        if (!entityWithState.state) {
+          entityWithState.state = { updates: 0, checksum: 0 };
+        }
+
+        const updates = (entityWithState.state.updates ?? 0) + 1;
+        entityWithState.state.updates = updates;
+
+        if (updates % 2 === 0) {
+          entityWithState.pos.x += 1;
+        }
+        if (updates % 3 === 0) {
+          entityWithState.pos.y += 1;
+        }
+
+        const checksumBase = entityWithState.state.checksum ?? 0;
+        entityWithState.state.checksum =
+          checksumBase +
+          entityWithState.pos.x * 31 +
+          entityWithState.pos.y * 17 +
+          updates;
+      },
+    });
+
+    const runScenario = (
+      chunkFractionsInEighths: number[],
+    ): {
+      tickCount: number;
+      elapsedMs: number;
+      world: WorldEntitySnapshot[];
+      updatesById: [number | undefined, number | undefined];
+    } => {
+      const sim = createSim({ width: 32, height: 32, seed: 42 });
+      const firstId = sim.addEntity({ kind, pos: { x: 1, y: 1 }, rot: "E" });
+      const secondId = sim.addEntity({ kind, pos: { x: 3, y: 2 }, rot: "S" });
+
+      for (const fraction of chunkFractionsInEighths) {
+        sim.step((fraction * tickMs) / 8);
+      }
+
+      return {
+        tickCount: sim.tickCount,
+        elapsedMs: sim.elapsedMs,
+        world: snapshotWorld(sim),
+        updatesById: [
+          getUpdateCount(sim.getEntityById(firstId)),
+          getUpdateCount(sim.getEntityById(secondId)),
+        ],
+      };
+    };
+
+    const singleChunk = runScenario([52]);
+    const irregularChunks = runScenario([3, 5, 9, 7, 12, 16]);
+    const fineGrainedChunks = runScenario([1, 1, 2, 4, 8, 16, 20]);
+
+    expect(singleChunk.tickCount).toBe(6);
+    expect(singleChunk.elapsedMs).toBeCloseTo(6 * tickMs);
+    expect(singleChunk.updatesById).toEqual([6, 6]);
+    expect(irregularChunks).toEqual(singleChunk);
+    expect(fineGrainedChunks).toEqual(singleChunk);
+  });
+
+  test("keeps paused intervals mutation-free and resumes from pre-pause state with deterministic remainder handling", () => {
+    const kind = nextKind("miner-pause-remainder");
+    const tickMs = 1000 / 60;
+
+    registerEntity(kind, {
+      create: () => ({ updates: 0 }),
+      update: (entity: unknown) => {
+        if (typeof entity !== "object" || entity === null || !("state" in entity)) {
+          throw new Error("Unexpected entity shape passed to update");
+        }
+
+        const entityWithState = entity as { state?: { updates?: number } };
+        if (!entityWithState.state) {
+          entityWithState.state = { updates: 0 };
+        }
+
+        const current = entityWithState.state.updates ?? 0;
+        entityWithState.state.updates = current + 1;
+      },
+    });
+
+    const sim = createSim();
+    const id = sim.addEntity({ kind, pos: { x: 2, y: 2 } } as Parameters<typeof sim.addEntity>[0]);
+
+    sim.step(2 * tickMs + tickMs / 2);
+    expect(sim.tickCount).toBe(2);
+    const updatesBeforePause = getUpdateCount(sim.getEntityById(id));
+    if (updatesBeforePause === undefined) {
+      throw new Error("Expected update state to exist before pause");
+    }
+    expect(updatesBeforePause).toBe(2);
+
+    const snapshotBeforePause = {
+      tickCount: sim.tickCount,
+      elapsedMs: sim.elapsedMs,
+      world: snapshotWorld(sim),
+    };
+
+    sim.pause();
+    sim.step(9 * tickMs);
+    sim.step(tickMs / 3);
+    sim.step((7 * tickMs) / 4);
+    expect(sim.tickCount).toBe(snapshotBeforePause.tickCount);
+    expect(sim.elapsedMs).toBe(snapshotBeforePause.elapsedMs);
+    expect(snapshotWorld(sim)).toEqual(snapshotBeforePause.world);
+
+    sim.resume();
+    sim.step(tickMs / 2);
+    expect(sim.tickCount).toBe(snapshotBeforePause.tickCount);
+    expect(sim.elapsedMs).toBe(snapshotBeforePause.elapsedMs);
+    expect(snapshotWorld(sim)).toEqual(snapshotBeforePause.world);
+
+    sim.step(tickMs + tickMs / 2);
+    expect(sim.tickCount).toBe(snapshotBeforePause.tickCount + 1);
+    expect(getUpdateCount(sim.getEntityById(id))).toBe(updatesBeforePause + 1);
+
+    sim.step(tickMs / 2);
+    expect(sim.tickCount).toBe(snapshotBeforePause.tickCount + 2);
+    expect(getUpdateCount(sim.getEntityById(id))).toBe(updatesBeforePause + 2);
   });
 
   test("tracks add/remove bookkeeping and handles missing removals", () => {
