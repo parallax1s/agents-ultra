@@ -293,23 +293,38 @@ describe('Transport cadence regressions', () => {
     const minerId = sim.addEntity({ kind: TEST_MINER_KIND, pos: { x: 1, y: 1 }, rot: 'E' });
 
     const blockingBelt = getState<BeltState>(sim, blockingBeltId);
+    const miner = getState<MinerState>(sim, minerId);
     blockingBelt.item = 'iron-ore';
 
-    stepTicks(sim, 59);
-    expect(getState<MinerState>(sim, minerId)).toMatchObject({ attempts: 0, blocked: 0, moved: 0 });
+    let tick = 0;
+    const advanceTo = (targetTick: number): void => {
+      if (targetTick < tick) {
+        throw new Error(`advanceTo target ${targetTick} is before current tick ${tick}`);
+      }
+      stepTicks(sim, targetTick - tick);
+      tick = targetTick;
+    };
 
-    stepTicks(sim, 1);
-    expect(getState<MinerState>(sim, minerId)).toMatchObject({ attempts: 1, blocked: 1, moved: 0 });
-    expect(getState<BeltState>(sim, blockingBeltId).item).toBe('iron-ore');
+    advanceTo(59);
+    expect(tick).toBe(59);
+    expect(miner).toMatchObject({ attempts: 0, blocked: 0, moved: 0 });
+    expect(blockingBelt.item).toBe('iron-ore');
 
-    getState<BeltState>(sim, blockingBeltId).item = null;
+    advanceTo(60);
+    expect(tick).toBe(60);
+    expect(miner).toMatchObject({ attempts: 1, blocked: 1, moved: 0 });
+    expect(blockingBelt.item).toBe('iron-ore');
 
-    stepTicks(sim, 59);
-    expect(getState<MinerState>(sim, minerId)).toMatchObject({ attempts: 1, blocked: 1, moved: 0 });
+    blockingBelt.item = null;
 
-    stepTicks(sim, 1);
-    expect(getState<MinerState>(sim, minerId)).toMatchObject({ attempts: 2, blocked: 1, moved: 1 });
-    expect(getState<BeltState>(sim, blockingBeltId).item).toBe('iron-ore');
+    advanceTo(119);
+    expect(tick).toBe(119);
+    expect(miner).toMatchObject({ attempts: 1, blocked: 1, moved: 0 });
+
+    advanceTo(120);
+    expect(tick).toBe(120);
+    expect(miner).toMatchObject({ attempts: 2, blocked: 1, moved: 1 });
+    expect(blockingBelt.item).toBe('iron-ore');
   });
 
   it('enforces Belt 15-tick forward attempts with one-item capacity semantics', () => {
@@ -320,26 +335,41 @@ describe('Transport cadence regressions', () => {
     const targetBeltId = sim.addEntity({ kind: TEST_BELT_KIND, pos: { x: 2, y: 1 }, rot: 'E' });
     const sourceBeltId = sim.addEntity({ kind: TEST_BELT_KIND, pos: { x: 1, y: 1 }, rot: 'E' });
 
-    getState<BeltState>(sim, targetBeltId).item = 'iron-ore';
-    getState<BeltState>(sim, sourceBeltId).item = 'iron-ore';
+    const sourceBelt = getState<BeltState>(sim, sourceBeltId);
+    const targetBelt = getState<BeltState>(sim, targetBeltId);
+    sourceBelt.item = 'iron-ore';
+    targetBelt.item = 'iron-ore';
 
-    stepTicks(sim, 14);
-    expect(getState<BeltState>(sim, sourceBeltId)).toMatchObject({ attempts: 0, blocked: 0, moved: 0, item: 'iron-ore' });
+    let tick = 0;
+    const advanceTo = (targetTick: number): void => {
+      if (targetTick < tick) {
+        throw new Error(`advanceTo target ${targetTick} is before current tick ${tick}`);
+      }
+      stepTicks(sim, targetTick - tick);
+      tick = targetTick;
+    };
 
-    stepTicks(sim, 1);
-    expect(getState<BeltState>(sim, sourceBeltId)).toMatchObject({ attempts: 1, blocked: 1, moved: 0, item: 'iron-ore' });
+    advanceTo(14);
+    expect(tick).toBe(14);
+    expect(sourceBelt).toMatchObject({ attempts: 0, blocked: 0, moved: 0, item: 'iron-ore' });
 
-    getState<BeltState>(sim, targetBeltId).item = null;
+    advanceTo(15);
+    expect(tick).toBe(15);
+    expect(sourceBelt).toMatchObject({ attempts: 1, blocked: 1, moved: 0, item: 'iron-ore' });
 
-    stepTicks(sim, 14);
-    expect(getState<BeltState>(sim, sourceBeltId).item).toBe('iron-ore');
+    targetBelt.item = null;
 
-    stepTicks(sim, 1);
-    expect(getState<BeltState>(sim, sourceBeltId)).toMatchObject({ attempts: 2, blocked: 1, moved: 1, item: null });
-    expect(getState<BeltState>(sim, targetBeltId).item).toBe('iron-ore');
+    advanceTo(29);
+    expect(tick).toBe(29);
+    expect(sourceBelt.item).toBe('iron-ore');
+
+    advanceTo(30);
+    expect(tick).toBe(30);
+    expect(sourceBelt).toMatchObject({ attempts: 2, blocked: 1, moved: 1, item: null });
+    expect(targetBelt.item).toBe('iron-ore');
   });
 
-  it('enforces Inserter 20-tick sided transfers and Furnace 180-tick/output-backpressure boundaries', () => {
+  it('enforces Inserter 20-tick and Furnace 180-tick deterministic boundaries', () => {
     ensureTransportCadenceDefinitions();
 
     const sim = createSim({ width: 10, height: 3, seed: 103 });
@@ -348,17 +378,23 @@ describe('Transport cadence regressions', () => {
     const inserterId = sim.addEntity({ kind: TEST_INSERTER_KIND, pos: { x: 4, y: 1 }, rot: 'E' });
     const feedBeltId = sim.addEntity({ kind: TEST_BELT_KIND, pos: { x: 3, y: 1 }, rot: 'E' });
 
-    getState<BeltState>(sim, feedBeltId).item = 'iron-ore';
+    const inserter = getState<InserterState>(sim, inserterId);
+    const feedBelt = getState<BeltState>(sim, feedBeltId);
+    const furnace = getState<FurnaceState>(sim, furnaceId);
+    feedBelt.item = 'iron-ore';
 
     let tick = 0;
-    const advance = (ticks: number): void => {
-      stepTicks(sim, ticks);
-      tick += ticks;
+    const advanceTo = (targetTick: number): void => {
+      if (targetTick < tick) {
+        throw new Error(`advanceTo target ${targetTick} is before current tick ${tick}`);
+      }
+      stepTicks(sim, targetTick - tick);
+      tick = targetTick;
     };
 
-    advance(19);
+    advanceTo(19);
     expect(tick).toBe(19);
-    expect(getState<InserterState>(sim, inserterId)).toMatchObject({
+    expect(inserter).toMatchObject({
       attempts: 0,
       pickups: 0,
       drops: 0,
@@ -366,11 +402,11 @@ describe('Transport cadence regressions', () => {
       blockedDrops: 0,
       holding: null,
     });
-    expect(getState<BeltState>(sim, feedBeltId).item).toBe('iron-ore');
+    expect(feedBelt.item).toBe('iron-ore');
 
-    advance(1);
+    advanceTo(20);
     expect(tick).toBe(20);
-    expect(getState<InserterState>(sim, inserterId)).toMatchObject({
+    expect(inserter).toMatchObject({
       attempts: 1,
       pickups: 1,
       drops: 0,
@@ -378,25 +414,24 @@ describe('Transport cadence regressions', () => {
       blockedDrops: 0,
       holding: 'iron-ore',
     });
-    expect(getState<BeltState>(sim, feedBeltId).item).toBeNull();
+    expect(feedBelt.item).toBeNull();
 
-    getState<BeltState>(sim, feedBeltId).item = 'iron-ore';
+    feedBelt.item = 'iron-ore';
 
-    advance(19);
+    advanceTo(39);
     expect(tick).toBe(39);
-    expect(getState<InserterState>(sim, inserterId)).toMatchObject({
+    expect(inserter).toMatchObject({
       attempts: 1,
       pickups: 1,
-      drops: 1,
+      drops: 0,
       blockedPickups: 0,
       blockedDrops: 0,
       holding: 'iron-ore',
     });
-    expect(getState<FurnaceState>(sim, furnaceId)).toMatchObject({ input: null, crafting: false, output: null, completed: 0 });
 
-    advance(1);
+    advanceTo(40);
     expect(tick).toBe(40);
-    expect(getState<InserterState>(sim, inserterId)).toMatchObject({
+    expect(inserter).toMatchObject({
       attempts: 2,
       pickups: 1,
       drops: 1,
@@ -404,15 +439,26 @@ describe('Transport cadence regressions', () => {
       blockedDrops: 0,
       holding: null,
     });
-    expect(getState<FurnaceState>(sim, furnaceId)).toMatchObject({ input: 'iron-ore', crafting: false, output: null, completed: 0 });
+    expect(furnace).toMatchObject({ input: 'iron-ore', crafting: false, output: null, completed: 0 });
 
-    advance(1);
+    advanceTo(41);
     expect(tick).toBe(41);
-    expect(getState<FurnaceState>(sim, furnaceId)).toMatchObject({ input: null, crafting: true, progressTicks: 0, output: null, completed: 0 });
+    expect(furnace).toMatchObject({ input: null, crafting: true, progressTicks: 0, output: null, completed: 0 });
 
-    advance(19);
+    advanceTo(59);
+    expect(tick).toBe(59);
+    expect(inserter).toMatchObject({
+      attempts: 2,
+      pickups: 1,
+      drops: 1,
+      blockedPickups: 0,
+      blockedDrops: 0,
+      holding: null,
+    });
+
+    advanceTo(60);
     expect(tick).toBe(60);
-    expect(getState<InserterState>(sim, inserterId)).toMatchObject({
+    expect(inserter).toMatchObject({
       attempts: 3,
       pickups: 2,
       drops: 1,
@@ -421,9 +467,9 @@ describe('Transport cadence regressions', () => {
       holding: 'iron-ore',
     });
 
-    advance(19);
+    advanceTo(79);
     expect(tick).toBe(79);
-    expect(getState<InserterState>(sim, inserterId)).toMatchObject({
+    expect(inserter).toMatchObject({
       attempts: 3,
       pickups: 2,
       drops: 1,
@@ -432,9 +478,9 @@ describe('Transport cadence regressions', () => {
       holding: 'iron-ore',
     });
 
-    advance(1);
+    advanceTo(80);
     expect(tick).toBe(80);
-    expect(getState<InserterState>(sim, inserterId)).toMatchObject({
+    expect(inserter).toMatchObject({
       attempts: 4,
       pickups: 2,
       drops: 1,
@@ -443,9 +489,21 @@ describe('Transport cadence regressions', () => {
       holding: 'iron-ore',
     });
 
-    advance(140);
+    advanceTo(219);
+    expect(tick).toBe(219);
+    expect(inserter).toMatchObject({
+      attempts: 10,
+      pickups: 2,
+      drops: 1,
+      blockedPickups: 0,
+      blockedDrops: 7,
+      holding: 'iron-ore',
+    });
+    expect(furnace).toMatchObject({ crafting: true, progressTicks: 178, output: null, completed: 0 });
+
+    advanceTo(220);
     expect(tick).toBe(220);
-    expect(getState<InserterState>(sim, inserterId)).toMatchObject({
+    expect(inserter).toMatchObject({
       attempts: 11,
       pickups: 2,
       drops: 1,
@@ -453,11 +511,11 @@ describe('Transport cadence regressions', () => {
       blockedDrops: 8,
       holding: 'iron-ore',
     });
-    expect(getState<FurnaceState>(sim, furnaceId)).toMatchObject({ crafting: true, progressTicks: 179, output: null, completed: 0 });
+    expect(furnace).toMatchObject({ crafting: true, progressTicks: 179, output: null, completed: 0 });
 
-    advance(1);
+    advanceTo(221);
     expect(tick).toBe(221);
-    expect(getState<InserterState>(sim, inserterId)).toMatchObject({
+    expect(inserter).toMatchObject({
       attempts: 11,
       pickups: 2,
       drops: 1,
@@ -465,44 +523,32 @@ describe('Transport cadence regressions', () => {
       blockedDrops: 8,
       holding: 'iron-ore',
     });
-    expect(getState<FurnaceState>(sim, furnaceId)).toMatchObject({ crafting: false, progressTicks: 0, output: 'iron-plate', completed: 1 });
+    expect(furnace).toMatchObject({ crafting: false, progressTicks: 0, output: 'iron-plate', completed: 1 });
 
-    advance(39);
-    expect(tick).toBe(260);
-    expect(getState<InserterState>(sim, inserterId)).toMatchObject({
-      attempts: 13,
+    furnace.output = null;
+
+    advanceTo(239);
+    expect(tick).toBe(239);
+    expect(inserter).toMatchObject({
+      attempts: 11,
       pickups: 2,
       drops: 1,
       blockedPickups: 0,
-      blockedDrops: 10,
+      blockedDrops: 8,
       holding: 'iron-ore',
     });
-    expect(getState<FurnaceState>(sim, furnaceId).output).toBe('iron-plate');
+    expect(furnace.output).toBeNull();
 
-    getState<FurnaceState>(sim, furnaceId).output = null;
-
-    advance(19);
-    expect(tick).toBe(279);
-    expect(getState<InserterState>(sim, inserterId)).toMatchObject({
-      attempts: 13,
-      pickups: 2,
-      drops: 1,
-      blockedPickups: 0,
-      blockedDrops: 10,
-      holding: 'iron-ore',
-    });
-    expect(getState<FurnaceState>(sim, furnaceId).output).toBeNull();
-
-    advance(1);
-    expect(tick).toBe(280);
-    expect(getState<InserterState>(sim, inserterId)).toMatchObject({
-      attempts: 14,
+    advanceTo(240);
+    expect(tick).toBe(240);
+    expect(inserter).toMatchObject({
+      attempts: 12,
       pickups: 2,
       drops: 2,
       blockedPickups: 0,
-      blockedDrops: 10,
+      blockedDrops: 8,
       holding: null,
     });
-    expect(getState<FurnaceState>(sim, furnaceId)).toMatchObject({ input: 'iron-ore', output: null, completed: 1 });
+    expect(furnace).toMatchObject({ input: 'iron-ore', output: null, completed: 1 });
   });
 });
