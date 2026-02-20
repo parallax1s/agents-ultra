@@ -10,7 +10,7 @@ The slice is intentionally narrow. It must prioritize a stable simulation loop, 
 
 ## Stack
 - Runtime: Node.js 20+
-- Build/dev server: Vite 5
+- Build/dev server: Vite 6
 - Language: TypeScript with `strict` mode enabled
 - UI framework: React 18
 - Testing: Vitest
@@ -145,5 +145,9 @@ Minimum expected unit-test coverage areas:
 - Belt transfer forward by direction.
 - Inserter pickup/drop transfer path.
 - Furnace conversion from `iron-ore` to `iron-plate` after processing ticks.
+
+Manual validation focus:
+- Fixed-step behavior: simulation state advancement must be deterministic at 60 TPS and independent of render timing.
+- Pause/resume behavior: `Space` pauses sim progression with no state changes and resumes from the exact prior tick state.
 
 Renderer/UI tests can be shallow and focus on integration boundaries (e.g., input action dispatch), while simulation correctness remains unit-tested in `tests/unit`.
