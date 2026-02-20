@@ -15,6 +15,7 @@ const COMPAT_FURNACE_KIND = "compat-legacy-furnace";
 
 let definitionRegistered = false;
 let oreToPlatePathRegistered = false;
+let compatKindCounter = 0;
 
 type Vector = {
   x: number;
@@ -90,6 +91,11 @@ const asState = <T extends object>(value: unknown): T | undefined => {
 };
 
 const offsetFrom = (direction: Direction): Vector => ORE_TO_PLATE_DIRECTION[direction];
+
+const nextKind = (prefix: string): string => {
+  compatKindCounter += 1;
+  return `${prefix}-${compatKindCounter}`;
+};
 
 const findKindAt = (sim: unknown, pos: Vector, kind: string): EntityBase | undefined => {
   if (typeof sim !== "object" || sim === null || !("getEntitiesAt" in sim)) {
@@ -418,6 +424,73 @@ describe("sim API compatibility", () => {
     sim.step((TICK_MS * 3) / 4);
     expect(sim.tickCount).toBe(pausedTickCount + 1);
     expect((sim.getEntityById(id)?.state as { ticks?: number } | undefined)?.ticks).toBe(pausedTickCount + 1);
+  });
+
+  it("preserves move cadence through pause for legacy addEntity(kind, init) inputs", () => {
+    const kind = nextKind("compat-legacy-move-pause");
+
+    registerEntity(kind, {
+      create: () => ({ ticks: 0 }),
+      update: (entity) => {
+        if (typeof entity !== "object" || entity === null || !("state" in entity)) {
+          throw new Error("Unexpected entity shape passed to update");
+        }
+
+        const state = asState<{ ticks?: number }>(entity.state);
+        if (state === undefined) {
+          throw new Error("Expected entity state to be object");
+        }
+
+        state.ticks = (state.ticks ?? 0) + 1;
+        entity.pos = {
+          x: entity.pos.x + 1,
+          y: entity.pos.y,
+        };
+      },
+    });
+
+    const runWithPause = (): { tickCount: number; elapsedMs: number; posX: number; ticks: number } => {
+      const sim = createSim({ width: 12, height: 12, seed: 3 });
+      const id = sim.addEntity(kind, {
+        pos: { x: 2, y: 2 },
+      });
+
+      sim.step(TICK_MS / 2);
+      sim.pause();
+      sim.step(TICK_MS * 4);
+      sim.resume();
+      sim.step(TICK_MS / 2);
+
+      const entity = sim.getEntityById(id);
+      const state = asState<{ ticks?: number }>(entity?.state);
+      return {
+        tickCount: sim.tickCount,
+        elapsedMs: sim.elapsedMs,
+        posX: entity?.pos.x ?? 0,
+        ticks: state?.ticks ?? 0,
+      };
+    };
+
+    const runWithoutPause = (): { tickCount: number; elapsedMs: number; posX: number; ticks: number } => {
+      const sim = createSim({ width: 12, height: 12, seed: 3 });
+      const id = sim.addEntity(kind, {
+        pos: { x: 2, y: 2 },
+      });
+
+      sim.step(TICK_MS / 2);
+      sim.step(TICK_MS / 2);
+
+      const entity = sim.getEntityById(id);
+      const state = asState<{ ticks?: number }>(entity?.state);
+      return {
+        tickCount: sim.tickCount,
+        elapsedMs: sim.elapsedMs,
+        posX: entity?.pos.x ?? 0,
+        ticks: state?.ticks ?? 0,
+      };
+    };
+
+    expect(runWithoutPause()).toEqual(runWithPause());
   });
 
   it("rejects out-of-bounds placements with a clear error", () => {

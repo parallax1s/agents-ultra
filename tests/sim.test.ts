@@ -302,6 +302,74 @@ describe("simulation registry and loop", () => {
     expect(updateCalls).toBe(4);
   });
 
+  test("preserves fractional-tick cadence through pause so movement resumes without drift", () => {
+    const kind = nextKind("miner-pause-cadence");
+    const tickMs = 1000 / 60;
+
+    registerEntity(kind, {
+      create: () => ({ updates: 0 }),
+      update: (entity: unknown) => {
+        if (typeof entity !== "object" || entity === null || !("state" in entity) || !("pos" in entity)) {
+          throw new Error("Unexpected entity shape passed to update");
+        }
+
+        const entityWithState = entity as {
+          state?: { updates?: number };
+          pos: { x: number; y: number };
+        };
+        const updates = (entityWithState.state?.updates ?? 0) + 1;
+        entityWithState.state = { ...(entityWithState.state ?? {}), updates };
+        entityWithState.pos.x += 1;
+      },
+    });
+
+    const runWithoutPause = (): {
+      tickCount: number;
+      elapsedMs: number;
+      world: WorldEntitySnapshot[];
+    } => {
+      const sim = createSim({ seed: 9 });
+      sim.addEntity({ kind, pos: { x: 0, y: 0 } } as Parameters<typeof sim.addEntity>[0]);
+
+      sim.step(tickMs / 2);
+      sim.step(tickMs / 2);
+
+      return {
+        tickCount: sim.tickCount,
+        elapsedMs: sim.elapsedMs,
+        world: snapshotWorld(sim),
+      };
+    };
+
+    const runWithPause = (): {
+      tickCount: number;
+      elapsedMs: number;
+      world: WorldEntitySnapshot[];
+    } => {
+      const sim = createSim({ seed: 9 });
+      sim.addEntity({ kind, pos: { x: 0, y: 0 } } as Parameters<typeof sim.addEntity>[0]);
+
+      sim.step(tickMs / 2);
+      sim.pause();
+      sim.step(5 * tickMs);
+      sim.resume();
+      sim.step(tickMs / 2);
+
+      return {
+        tickCount: sim.tickCount,
+        elapsedMs: sim.elapsedMs,
+        world: snapshotWorld(sim),
+      };
+    };
+
+    const unpaused = runWithoutPause();
+    const paused = runWithPause();
+
+    expect(unpaused).toEqual(paused);
+    expect(unpaused.tickCount).toBe(1);
+    expect(unpaused.world[0]?.pos).toEqual({ x: 1, y: 0 });
+  });
+
   test("produces identical ticks and world state for equal active elapsed time across chunk patterns", () => {
     const kind = nextKind("miner-chunk-equivalence");
     const tickMs = 1000 / 60;
@@ -431,17 +499,20 @@ describe("simulation registry and loop", () => {
 
     sim.resume();
     sim.step(tickMs / 2);
-    expect(sim.tickCount).toBe(snapshotBeforePause.tickCount);
-    expect(sim.elapsedMs).toBe(snapshotBeforePause.elapsedMs);
-    expect(snapshotWorld(sim)).toEqual(snapshotBeforePause.world);
-
-    sim.step(tickMs + tickMs / 2);
     expect(sim.tickCount).toBe(snapshotBeforePause.tickCount + 1);
+    expect(sim.elapsedMs).toBeCloseTo(snapshotBeforePause.elapsedMs + tickMs);
+    expect(snapshotWorld(sim)).not.toEqual(snapshotBeforePause.world);
     expect(getUpdateCount(sim.getEntityById(id))).toBe(updatesBeforePause + 1);
 
-    sim.step(tickMs / 2);
+    sim.step(tickMs + tickMs / 2);
     expect(sim.tickCount).toBe(snapshotBeforePause.tickCount + 2);
+    expect(sim.elapsedMs).toBeCloseTo(snapshotBeforePause.elapsedMs + tickMs * 2);
     expect(getUpdateCount(sim.getEntityById(id))).toBe(updatesBeforePause + 2);
+
+    sim.step(tickMs / 2);
+    expect(sim.tickCount).toBe(snapshotBeforePause.tickCount + 3);
+    expect(sim.elapsedMs).toBeCloseTo(snapshotBeforePause.elapsedMs + tickMs * 3);
+    expect(getUpdateCount(sim.getEntityById(id))).toBe(updatesBeforePause + 3);
   });
 
   test("tracks add/remove bookkeeping and handles missing removals", () => {

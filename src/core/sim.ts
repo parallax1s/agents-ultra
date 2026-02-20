@@ -98,7 +98,6 @@ export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
   let nextEntityId = 1;
   let accumulatorMs = 0;
   let paused = false;
-  let discardPostResumeFraction = false;
   let tick = 0;
   let tickCount = 0;
   let elapsedMs = 0;
@@ -390,10 +389,6 @@ export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
     accumulatorMs += dtMs;
     const stepsToRun = Math.floor((accumulatorMs + STEP_EPSILON) / TICK_MS);
     if (stepsToRun <= 0) {
-      if (discardPostResumeFraction) {
-        accumulatorMs = 0;
-        discardPostResumeFraction = false;
-      }
       return;
     }
 
@@ -401,12 +396,6 @@ export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
 
     for (let stepIndex = 0; stepIndex < stepsToRun; stepIndex += 1) {
       runTick();
-    }
-
-    if (discardPostResumeFraction) {
-      accumulatorMs = 0;
-      discardPostResumeFraction = false;
-      return;
     }
 
     if (accumulatorMs < 0 && accumulatorMs > -STEP_EPSILON) {
@@ -418,8 +407,6 @@ export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
     width: worldWidth,
     height: worldHeight,
     pause(): void {
-      discardPostResumeFraction = accumulatorMs > STEP_EPSILON;
-      accumulatorMs = 0;
       paused = true;
     },
     resume(): void {
