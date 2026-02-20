@@ -124,6 +124,17 @@ type InserterState = Record<string, unknown> & {
   state: 0 | 1 | 2 | 3;
 };
 
+type BeltTransferPlan = {
+  source: EntityBase;
+  target: EntityBase;
+  item: ItemKind;
+};
+
+type BeltTransferResolution = {
+  state: "resolving" | "movable" | "blocked";
+  target?: EntityBase | null;
+};
+
 type AcceptItemHost = {
   canAcceptItem?: (item: string) => boolean;
   acceptItem: (item: string) => boolean;
@@ -280,6 +291,18 @@ const tryAcceptViaMethod = (host: unknown, item: ItemKind): boolean => {
   return host.acceptItem(item);
 };
 
+const canAcceptViaMethod = (host: unknown, item: ItemKind): boolean => {
+  if (!isAcceptItemHost(host)) {
+    return false;
+  }
+
+  if (host.canAcceptItem === undefined) {
+    return true;
+  }
+
+  return host.canAcceptItem(item);
+};
+
 const tryProvideViaMethod = (host: unknown): ItemKind | null => {
   if (!isProvideItemHost(host)) {
     return null;
@@ -400,6 +423,157 @@ const transferToCell = (
   return false;
 };
 
+const canTransferToBeltTarget = (
+  sim: SimLike,
+  source: EntityBase,
+  target: EntityBase,
+  item: ItemKind,
+  reservedTargetIds: Set<string>,
+  resolutions: Map<string, BeltTransferResolution>,
+): boolean => {
+  if (target.id === source.id || reservedTargetIds.has(target.id)) {
+    return false;
+  }
+
+  if (target.kind === "belt") {
+    const targetState = ensureBeltState(target);
+    if (targetState.item === null) {
+      return true;
+    }
+
+    const onwardTarget = chooseBeltTransferTarget(
+      sim,
+      target,
+      reservedTargetIds,
+      resolutions,
+    );
+    return onwardTarget !== null;
+  }
+
+  if (target.kind === "inserter") {
+    const inserterState = ensureInserterState(target);
+    const incomingDirection = directionFromTo(source.pos, target.pos);
+    if (incomingDirection !== target.rot || inserterState.holding !== null) {
+      return false;
+    }
+    return true;
+  }
+
+  if (canAcceptViaMethod(target.state, item)) {
+    return true;
+  }
+
+  if (canAcceptViaMethod(target, item)) {
+    return true;
+  }
+
+  if (target.kind !== "furnace" || !isRecord(target.state)) {
+    return false;
+  }
+
+  if (item !== "iron-ore") {
+    return false;
+  }
+
+  const input = target.state.input;
+  const inputOccupied = target.state.inputOccupied;
+  return (input === null || input === undefined) && inputOccupied !== true;
+};
+
+const chooseBeltTransferTarget = (
+  sim: SimLike,
+  source: EntityBase,
+  reservedTargetIds: Set<string>,
+  resolutions: Map<string, BeltTransferResolution>,
+): EntityBase | null => {
+  const sourceState = ensureBeltState(source);
+  if (sourceState.item === null || sourceState.tickPhase % BELT_TRANSFER_CADENCE_TICKS !== 0) {
+    return null;
+  }
+
+  const existingResolution = resolutions.get(source.id);
+  if (existingResolution !== undefined) {
+    if (existingResolution.state === "resolving") {
+      return null;
+    }
+    return existingResolution.state === "movable" ? existingResolution.target ?? null : null;
+  }
+
+  const targetPos = move(source.pos, source.rot);
+  const candidates = getEntitiesAt(sim, targetPos);
+  resolutions.set(source.id, { state: "resolving", target: null });
+
+  for (const candidate of candidates) {
+    if (candidate.id === source.id) {
+      continue;
+    }
+
+    if (!canTransferToBeltTarget(sim, source, candidate, sourceState.item, reservedTargetIds, resolutions)) {
+      continue;
+    }
+
+    reservedTargetIds.add(candidate.id);
+    resolutions.set(source.id, { state: "movable", target: candidate });
+    return candidate;
+  }
+
+  resolutions.set(source.id, { state: "blocked", target: null });
+  return null;
+};
+
+const buildBeltTransferPlans = (sim: SimLike, entities: ReadonlyArray<EntityBase>): BeltTransferPlan[] => {
+  const plans: BeltTransferPlan[] = [];
+  const reservedTargetIds = new Set<string>();
+  const resolutions = new Map<string, BeltTransferResolution>();
+
+  for (const source of entities) {
+    const sourceState = ensureBeltState(source);
+    sourceState.tickPhase += 1;
+  }
+
+  for (const source of entities) {
+    const sourceState = ensureBeltState(source);
+    if (sourceState.item === null || sourceState.tickPhase % BELT_TRANSFER_CADENCE_TICKS !== 0) {
+      continue;
+    }
+
+    const target = chooseBeltTransferTarget(sim, source, reservedTargetIds, resolutions);
+    if (target === null) {
+      continue;
+    }
+
+    plans.push({
+      source,
+      target,
+      item: sourceState.item,
+    });
+  }
+
+  return plans;
+};
+
+const commitBeltTransferPlans = (plans: ReadonlyArray<BeltTransferPlan>): void => {
+  for (const plan of plans) {
+    const sourceState = ensureBeltState(plan.source);
+    if (sourceState.item !== plan.item) {
+      continue;
+    }
+
+    sourceState.item = null;
+    syncBeltItemViews(sourceState);
+  }
+
+  for (const plan of plans) {
+    if (tryAcceptItem(plan.target, plan.item, plan.source.pos)) {
+      continue;
+    }
+
+    const sourceState = ensureBeltState(plan.source);
+    sourceState.item = plan.item;
+    syncBeltItemViews(sourceState);
+  }
+};
+
 const canMineTile = (sim: SimLike, pos: GridCoord): boolean => {
   const fromGetter = typeof sim.getMap === "function" ? sim.getMap() : undefined;
   const map = fromGetter ?? sim.map;
@@ -431,22 +605,13 @@ const tickMinerEntity = (entity: EntityBase, _dtMs: number, sim: SimLike): void 
   state.output = emitted ? "iron-ore" : null;
 };
 
-const tickBeltEntity = (entity: EntityBase, _dtMs: number, sim: SimLike): void => {
-  const state = ensureBeltState(entity);
-  state.tickPhase += 1;
-
-  if (state.item === null || state.tickPhase % BELT_TRANSFER_CADENCE_TICKS !== 0) {
+const tickBeltEntities = (entities: ReadonlyArray<EntityBase>, sim: SimLike): void => {
+  const plans = buildBeltTransferPlans(sim, entities);
+  if (plans.length === 0) {
     return;
   }
 
-  const targetPos = move(entity.pos, entity.rot);
-  const transferred = transferToCell(sim, entity, targetPos, state.item);
-  if (!transferred) {
-    return;
-  }
-
-  state.item = null;
-  syncBeltItemViews(state);
+  commitBeltTransferPlans(plans);
 };
 
 const tickInserterEntity = (entity: EntityBase, _dtMs: number, sim: SimLike): void => {
@@ -514,9 +679,7 @@ const runCanonicalTick = (sim: SimLike, dtMs: number): void => {
     }
 
     if (kind === "belt") {
-      for (const entity of entities) {
-        tickBeltEntity(entity, dtMs, sim);
-      }
+      tickBeltEntities(entities, sim);
       continue;
     }
 
