@@ -292,4 +292,30 @@ describe('Furnace', () => {
     expect(furnace.canProvideItem('iron-plate')).toBe(false);
     expect(furnace.provideItem('iron-plate')).toBeNull();
   });
+
+  it('advances to output only on exact furnace boundary ticks for repeated cycles', () => {
+    const furnace = new Furnace();
+
+    startCraft(furnace);
+    runTicks(furnace, FURNACE_SMELT_TICKS - 1);
+    expect(furnace.canProvideItem('iron-plate')).toBe(false);
+    expect(furnace.canAcceptItem('iron-ore')).toBe(false);
+
+    runTicks(furnace, 1);
+    expect(furnace.canProvideItem('iron-plate')).toBe(true);
+    expect(furnace.canAcceptItem('iron-ore')).toBe(false);
+
+    expect(furnace.provideItem('iron-plate')).toBe('iron-plate');
+    expect(furnace.canProvideItem('iron-plate')).toBe(false);
+
+    startCraft(furnace);
+    runTicks(furnace, FURNACE_SMELT_TICKS - 1);
+    expect(furnace.canProvideItem('iron-plate')).toBe(false);
+    expect(furnace.canAcceptItem('iron-ore')).toBe(false);
+
+    runTicks(furnace, 1);
+    expect(furnace.canProvideItem('iron-plate')).toBe(true);
+    expect(furnace.canAcceptItem('iron-ore')).toBe(false);
+    expect(furnace.provideItem('iron-plate')).toBe('iron-plate');
+  });
 });

@@ -1,7 +1,7 @@
 import { getDefinition, registerEntity } from "../src/core/registry";
 import { createSim } from "../src/core/sim";
 import { attachInput } from "../src/ui/input";
-import { rotateDirection, DIRECTION_SEQUENCE, type Direction } from "../src/core/types";
+import { rotateDirection, DIRECTION_SEQUENCE, type Direction, type EntityBase, type ItemKind } from "../src/core/types";
 
 let kindCounter = 0;
 
@@ -67,6 +67,260 @@ const snapshotWorld = (sim: ReturnType<typeof createSim>): WorldEntitySnapshot[]
       state: entity.state === undefined ? undefined : structuredClone(entity.state),
     }))
     .sort((left, right) => Number(left.id) - Number(right.id));
+};
+
+const CHAIN_MINER_KIND = "sim-miner-belt-inserter-furnace";
+const CHAIN_BELT_KIND = "sim-belt-chain-belt";
+const CHAIN_INSERTER_KIND = "sim-belt-chain-inserter";
+const CHAIN_FURNACE_KIND = "sim-belt-chain-furnace";
+const CHAIN_MINER_ATTEMPTS = 60;
+const CHAIN_BELT_ATTEMPTS = 15;
+const CHAIN_INSERTER_ATTEMPTS = 20;
+const CHAIN_FURNACE_SMELT_TICKS = 180;
+
+let chainCadenceDefinitionsRegistered = false;
+
+type Vector = {
+  x: number;
+  y: number;
+};
+
+type ChainMinerState = {
+  ticks: number;
+  holding: ItemKind | null;
+  attempts: number;
+  moved: number;
+  blocked: number;
+};
+
+type ChainBeltState = {
+  ticks: number;
+  item: ItemKind | null;
+  attempts: number;
+  moved: number;
+  blocked: number;
+};
+
+type ChainInserterState = {
+  ticks: number;
+  holding: ItemKind | null;
+  attempts: number;
+  pickups: number;
+  drops: number;
+  blockedPickups: number;
+  blockedDrops: number;
+};
+
+type ChainFurnaceState = {
+  input: ItemKind | null;
+  output: ItemKind | null;
+  crafting: boolean;
+  progressTicks: number;
+  completed: number;
+};
+
+const add = (left: Vector, right: Vector): Vector => ({
+  x: left.x + right.x,
+  y: left.y + right.y,
+});
+
+const findKindAt = (sim: ReturnType<typeof createSim>, pos: Vector, kind: string): EntityBase | undefined => {
+  return sim.getEntitiesAt(pos).find((entity) => entity.kind === kind);
+};
+
+const offsetFrom = (direction: Direction): Vector => {
+  if (direction === "N") return { x: 0, y: -1 };
+  if (direction === "S") return { x: 0, y: 1 };
+  if (direction === "E") return { x: 1, y: 0 };
+  return { x: -1, y: 0 };
+};
+
+const asState = <T extends object>(value: unknown): T | undefined => {
+  if (typeof value === null || typeof value !== "object") {
+    return undefined;
+  }
+
+  return value as T;
+};
+
+const ensureChainCadenceDefinitions = (): void => {
+  if (chainCadenceDefinitionsRegistered) {
+    return;
+  }
+
+  registerEntity(CHAIN_MINER_KIND, {
+    create: () => ({
+      ticks: 0,
+      holding: "iron-ore" as ItemKind | null,
+      attempts: 0,
+      moved: 0,
+      blocked: 0,
+    }),
+    update: (entity, _dtMs, sim) => {
+      const state = asState<ChainMinerState>(entity.state);
+      if (state === undefined) {
+        return;
+      }
+
+      state.ticks += 1;
+      if (state.ticks % CHAIN_MINER_ATTEMPTS !== 0) {
+        return;
+      }
+
+      if (state.holding === null) {
+        state.holding = "iron-ore";
+      }
+
+      const ahead = add(entity.pos, offsetFrom(entity.rot));
+      const belt = findKindAt(sim, ahead, CHAIN_BELT_KIND);
+      const beltState = asState<ChainBeltState>(belt?.state);
+
+      if (!beltState || beltState.item !== null) {
+        state.blocked += 1;
+        return;
+      }
+
+      state.attempts += 1;
+      beltState.item = state.holding;
+      state.holding = null;
+      state.moved += 1;
+    },
+  });
+
+  registerEntity(CHAIN_BELT_KIND, {
+    create: () => ({ ticks: 0, item: null as ItemKind | null, attempts: 0, moved: 0, blocked: 0 }),
+    update: (entity, _dtMs, sim) => {
+      const state = asState<ChainBeltState>(entity.state);
+      if (state === undefined) {
+        return;
+      }
+
+      state.ticks += 1;
+      if (state.ticks % CHAIN_BELT_ATTEMPTS !== 0 || state.item === null) {
+        return;
+      }
+
+      state.attempts += 1;
+
+      const ahead = add(entity.pos, offsetFrom(entity.rot));
+      const inserter = findKindAt(sim, ahead, CHAIN_INSERTER_KIND);
+      const inserterState = asState<ChainInserterState>(inserter?.state);
+
+      if (inserterState === undefined || inserterState.holding !== null) {
+        state.blocked += 1;
+        return;
+      }
+
+      inserterState.holding = state.item;
+      state.item = null;
+      state.moved += 1;
+    },
+  });
+
+  registerEntity(CHAIN_INSERTER_KIND, {
+    create: () => ({
+      ticks: 0,
+      holding: null as ItemKind | null,
+      attempts: 0,
+      pickups: 0,
+      drops: 0,
+      blockedPickups: 0,
+      blockedDrops: 0,
+    }),
+    update: (entity, _dtMs, sim) => {
+      const state = asState<ChainInserterState>(entity.state);
+      if (state === undefined) {
+        return;
+      }
+
+      state.ticks += 1;
+      if (state.ticks % CHAIN_INSERTER_ATTEMPTS !== 0) {
+        return;
+      }
+
+      state.attempts += 1;
+
+      if (state.holding === null) {
+        const source = add(entity.pos, { x: offsetFrom(entity.rot).x * -1, y: offsetFrom(entity.rot).y * -1 });
+        const belt = findKindAt(sim, source, CHAIN_BELT_KIND);
+        const beltState = asState<ChainBeltState>(belt?.state);
+
+        if (beltState === undefined || beltState.item === null) {
+          state.blockedPickups += 1;
+          return;
+        }
+
+        state.holding = beltState.item;
+        beltState.item = null;
+        state.pickups += 1;
+        return;
+      }
+
+      const target = add(entity.pos, offsetFrom(entity.rot));
+      const furnace = findKindAt(sim, target, CHAIN_FURNACE_KIND);
+      const furnaceState = asState<ChainFurnaceState>(furnace?.state);
+
+      if (
+        furnaceState === undefined ||
+        furnaceState.input !== null ||
+        furnaceState.crafting ||
+        furnaceState.output !== null
+      ) {
+        state.blockedDrops += 1;
+        return;
+      }
+
+      furnaceState.input = state.holding;
+      state.holding = null;
+      state.drops += 1;
+    },
+  });
+
+  registerEntity(CHAIN_FURNACE_KIND, {
+    create: () => ({
+      input: null as ItemKind | null,
+      output: null as ItemKind | null,
+      crafting: false,
+      progressTicks: 0,
+      completed: 0,
+    }),
+    update: (entity) => {
+      const state = asState<ChainFurnaceState>(entity.state);
+      if (state === undefined) {
+        return;
+      }
+
+      if (state.output !== null) {
+        return;
+      }
+
+      if (!state.crafting) {
+        if (state.input !== "iron-ore") {
+          return;
+        }
+
+        state.input = null;
+        state.crafting = true;
+        state.progressTicks = 0;
+        return;
+      }
+
+      if (state.progressTicks < CHAIN_FURNACE_SMELT_TICKS) {
+        state.progressTicks += 1;
+      }
+
+      if (state.progressTicks < CHAIN_FURNACE_SMELT_TICKS) {
+        return;
+      }
+
+      state.output = "iron-plate";
+      state.crafting = false;
+      state.progressTicks = 0;
+      state.completed += 1;
+    },
+  });
+
+  chainCadenceDefinitionsRegistered = true;
 };
 
 type Listener = (event: unknown) => void;
@@ -513,6 +767,186 @@ describe("simulation registry and loop", () => {
     expect(sim.tickCount).toBe(snapshotBeforePause.tickCount + 3);
     expect(sim.elapsedMs).toBeCloseTo(snapshotBeforePause.elapsedMs + tickMs * 3);
     expect(getUpdateCount(sim.getEntityById(id))).toBe(updatesBeforePause + 3);
+  });
+
+  test("enforces exact miner->belt->inserter->furnace cadence at 60/20/15/180 checkpoints", () => {
+    ensureChainCadenceDefinitions();
+
+    const sim = createSim({ width: 10, height: 3, seed: 15 });
+
+    const minerId = sim.addEntity({ kind: CHAIN_MINER_KIND, pos: { x: 1, y: 1 }, rot: "E" });
+    const beltId = sim.addEntity({ kind: CHAIN_BELT_KIND, pos: { x: 2, y: 1 }, rot: "E" });
+    const inserterId = sim.addEntity({ kind: CHAIN_INSERTER_KIND, pos: { x: 3, y: 1 }, rot: "E" });
+    const furnaceId = sim.addEntity({ kind: CHAIN_FURNACE_KIND, pos: { x: 4, y: 1 }, rot: "E" });
+
+    const miner = sim.getEntityById(minerId);
+    const belt = sim.getEntityById(beltId);
+    const inserter = sim.getEntityById(inserterId);
+    const furnace = sim.getEntityById(furnaceId);
+
+    if (miner?.state === undefined || belt?.state === undefined || inserter?.state === undefined || furnace?.state === undefined) {
+      throw new Error("Expected all cadence entities to have states");
+    }
+
+    const minerState = asState<ChainMinerState>(miner.state);
+    const beltState = asState<ChainBeltState>(belt.state);
+    const inserterState = asState<ChainInserterState>(inserter.state);
+    const furnaceState = asState<ChainFurnaceState>(furnace.state);
+
+    if (
+      minerState === undefined ||
+      beltState === undefined ||
+      inserterState === undefined ||
+      furnaceState === undefined
+    ) {
+      throw new Error("Expected typed entity states for cadence-chain entities");
+    }
+
+    let tick = 0;
+    const advanceTo = (targetTick: number): void => {
+      if (targetTick < tick) {
+        throw new Error(`advanceTo target ${targetTick} is before current tick ${tick}`);
+      }
+
+      for (let i = 0; i < targetTick - tick; i += 1) {
+        sim.step(1000 / 60);
+      }
+
+      tick = targetTick;
+    };
+
+    advanceTo(14);
+    expect(tick).toBe(14);
+    expect(minerState).toMatchObject({ ticks: 14, holding: "iron-ore", moved: 0, attempts: 0 });
+    expect(beltState).toMatchObject({ ticks: 14, item: null, moved: 0 });
+    expect(inserterState).toMatchObject({ ticks: 14, holding: null, attempts: 0, pickups: 0, drops: 0 });
+    expect(furnaceState).toMatchObject({ input: null, output: null, crafting: false, progressTicks: 0, completed: 0 });
+
+    advanceTo(20);
+    expect(tick).toBe(20);
+    expect(inserterState).toMatchObject({ attempts: 1, holding: null });
+
+    advanceTo(59);
+    expect(tick).toBe(59);
+    expect(minerState).toMatchObject({ attempts: 0, moved: 0 });
+    expect(beltState.item).toBeNull();
+    expect(furnaceState.crafting).toBe(false);
+
+    advanceTo(60);
+    expect(tick).toBe(60);
+    expect(minerState).toMatchObject({ attempts: 1, moved: 1 });
+    expect(beltState).toMatchObject({ item: null, moved: 1 });
+    expect(inserterState).toMatchObject({ attempts: 3, pickups: 0, drops: 1, holding: null });
+    expect(furnaceState).toMatchObject({ crafting: true, completed: 0, progressTicks: 0, input: null, output: null });
+
+    advanceTo(61);
+    expect(tick).toBe(61);
+    expect(furnaceState).toMatchObject({ crafting: true, progressTicks: 1, output: null });
+
+    advanceTo(239);
+    expect(tick).toBe(239);
+    expect(furnaceState).toMatchObject({ crafting: true, progressTicks: 179, output: null, completed: 0 });
+
+    advanceTo(240);
+    expect(tick).toBe(240);
+    expect(furnaceState).toMatchObject({ crafting: false, output: "iron-plate", progressTicks: 0, completed: 1 });
+
+    advanceTo(241);
+    expect(tick).toBe(241);
+    expect(furnaceState).toMatchObject({ crafting: false, output: "iron-plate", completed: 1 });
+  });
+
+  test("halts chain movement during pause and preserves cadence phase offsets on resume", () => {
+    ensureChainCadenceDefinitions();
+
+    const runScenario = (withPause: boolean): string => {
+      const sim = createSim({ width: 10, height: 3, seed: 16 });
+      const minerId = sim.addEntity({ kind: CHAIN_MINER_KIND, pos: { x: 1, y: 1 }, rot: "E" });
+      const beltId = sim.addEntity({ kind: CHAIN_BELT_KIND, pos: { x: 2, y: 1 }, rot: "E" });
+      const inserterId = sim.addEntity({ kind: CHAIN_INSERTER_KIND, pos: { x: 3, y: 1 }, rot: "E" });
+      const furnaceId = sim.addEntity({ kind: CHAIN_FURNACE_KIND, pos: { x: 4, y: 1 }, rot: "E" });
+
+      const miner = sim.getEntityById(minerId);
+      const belt = sim.getEntityById(beltId);
+      const inserter = sim.getEntityById(inserterId);
+      const furnace = sim.getEntityById(furnaceId);
+
+      if (miner?.state === undefined || belt?.state === undefined || inserter?.state === undefined || furnace?.state === undefined) {
+        throw new Error("Expected all cadence entities to have states");
+      }
+
+      const tickStates: Array<{
+        tick: number;
+        miner: ChainMinerState;
+        belt: ChainBeltState;
+        inserter: ChainInserterState;
+        furnace: ChainFurnaceState;
+      }> = [];
+
+      const currentSnapshot = (tick: number): {
+        tick: number;
+        miner: ChainMinerState;
+        belt: ChainBeltState;
+        inserter: ChainInserterState;
+        furnace: ChainFurnaceState;
+      } => {
+        const minerState = asState<ChainMinerState>(miner.state);
+        const beltState = asState<ChainBeltState>(belt.state);
+        const inserterState = asState<ChainInserterState>(inserter.state);
+        const furnaceState = asState<ChainFurnaceState>(furnace.state);
+
+        if (
+          minerState === undefined ||
+          beltState === undefined ||
+          inserterState === undefined ||
+          furnaceState === undefined
+        ) {
+          throw new Error("Expected typed entity states for cadence-chain entities");
+        }
+
+        return {
+          tick,
+          miner: { ...minerState },
+          belt: { ...beltState },
+          inserter: { ...inserterState },
+          furnace: { ...furnaceState },
+        };
+      };
+
+      const addSnapshot = (tick: number): void => {
+        tickStates.push(currentSnapshot(tick));
+      };
+
+      const tickMs = 1000 / 60;
+      const stepTicks = (ticks: number): void => {
+        for (let i = 0; i < ticks; i += 1) {
+          sim.step(tickMs);
+        }
+      };
+
+      stepTicks(59);
+      addSnapshot(59);
+
+      if (withPause) {
+        const pausedReference = JSON.stringify(currentSnapshot(59));
+
+        sim.pause();
+        stepTicks(45);
+        sim.resume();
+        const pausedState = JSON.stringify(currentSnapshot(59));
+
+        expect(pausedState).toBe(pausedReference);
+      }
+
+      stepTicks(181);
+      addSnapshot(240);
+      stepTicks(1);
+      addSnapshot(241);
+
+      return JSON.stringify(tickStates);
+    };
+
+    expect(runScenario(true)).toBe(runScenario(false));
   });
 
   test("tracks add/remove bookkeeping and handles missing removals", () => {

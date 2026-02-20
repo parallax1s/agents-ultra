@@ -12,9 +12,14 @@ const COMPAT_MINER_KIND = "compat-legacy-miner";
 const COMPAT_BELT_KIND = "compat-legacy-belt";
 const COMPAT_INSERTER_KIND = "compat-legacy-inserter";
 const COMPAT_FURNACE_KIND = "compat-legacy-furnace";
+const COMPAT_CHAIN_MINER_KIND = "compat-cadence-regression-miner";
+const COMPAT_CHAIN_BELT_KIND = "compat-cadence-regression-belt";
+const COMPAT_CHAIN_INSERTER_KIND = "compat-cadence-regression-inserter";
+const COMPAT_CHAIN_FURNACE_KIND = "compat-cadence-regression-furnace";
 
 let definitionRegistered = false;
 let oreToPlatePathRegistered = false;
+let cadenceChainPathRegistered = false;
 let compatKindCounter = 0;
 
 type Vector = {
@@ -54,9 +59,15 @@ type CompatFurnaceState = {
   completed: number;
 };
 
+type CompatCadenceBeltState = CompatBeltState & { moved: number };
+
 const COMPAT_MINER_ATTEMPTS = 2;
 const COMPAT_INSERTER_ATTEMPTS = 2;
 const COMPAT_FURNACE_SMELT_TICKS = 3;
+const COMPAT_CHAIN_MINER_ATTEMPTS = 60;
+const COMPAT_CHAIN_BELT_ATTEMPTS = 15;
+const COMPAT_CHAIN_INSERTER_ATTEMPTS = 20;
+const COMPAT_CHAIN_FURNACE_SMELT_TICKS = 180;
 const ORE_TO_PLATE_DIRECTION: Record<Direction, Vector> = {
   N: { x: 0, y: -1 },
   E: { x: 1, y: 0 },
@@ -282,6 +293,195 @@ const ensureOreToPlateDefinitions = (): void => {
   });
 
   oreToPlatePathRegistered = true;
+};
+
+const ensureCadenceChainDefinitions = (): void => {
+  if (cadenceChainPathRegistered) {
+    return;
+  }
+
+  registerEntity(COMPAT_CHAIN_MINER_KIND, {
+    create: () => ({
+      ticks: 0,
+      holding: "iron-ore" as ItemKind | null,
+      attempts: 0,
+      moved: 0,
+      blocked: 0,
+    }),
+    update: (entity, _dtMs, sim) => {
+      const state = asState<CompatMinerState>(entity.state);
+      if (state === undefined) {
+        return;
+      }
+
+      state.ticks += 1;
+      if (state.ticks % COMPAT_CHAIN_MINER_ATTEMPTS !== 0) {
+        return;
+      }
+
+      if (state.holding === null) {
+        state.holding = "iron-ore";
+      }
+
+      const ahead = {
+        x: entity.pos.x + offsetFrom(entity.rot).x,
+        y: entity.pos.y + offsetFrom(entity.rot).y,
+      };
+      const belt = findKindAt(sim, ahead, COMPAT_CHAIN_BELT_KIND);
+      const beltState = asState<CompatBeltState>(belt?.state);
+
+      if (!beltState || beltState.item !== null) {
+        state.blocked += 1;
+        return;
+      }
+
+      state.attempts += 1;
+      beltState.item = state.holding;
+      state.holding = null;
+      state.moved += 1;
+    },
+  });
+
+  registerEntity(COMPAT_CHAIN_BELT_KIND, {
+    create: () => ({ ticks: 0, item: null as ItemKind | null, attempts: 0, moved: 0, blocked: 0 }),
+    update: (entity, _dtMs, sim) => {
+      const state = asState<CompatCadenceBeltState>(entity.state);
+      if (state === undefined) {
+        return;
+      }
+
+      state.ticks += 1;
+      if (state.ticks % COMPAT_CHAIN_BELT_ATTEMPTS !== 0 || state.item === null) {
+        return;
+      }
+
+      const ahead = {
+        x: entity.pos.x + offsetFrom(entity.rot).x,
+        y: entity.pos.y + offsetFrom(entity.rot).y,
+      };
+      const inserter = findKindAt(sim, ahead, COMPAT_CHAIN_INSERTER_KIND);
+      const inserterState = asState<CompatInserterState>(inserter?.state);
+
+      if (inserterState === undefined || inserterState.holding !== null) {
+        return;
+      }
+
+      inserterState.holding = state.item;
+      state.item = null;
+      state.moved += 1;
+    },
+  });
+
+  registerEntity(COMPAT_CHAIN_INSERTER_KIND, {
+    create: () => ({
+      ticks: 0,
+      holding: null as ItemKind | null,
+      attempts: 0,
+      pickups: 0,
+      drops: 0,
+      blockedPickups: 0,
+      blockedDrops: 0,
+    }),
+    update: (entity, _dtMs, sim) => {
+      const state = asState<CompatInserterState>(entity.state);
+      if (state === undefined) {
+        return;
+      }
+
+      state.ticks += 1;
+      if (state.ticks % COMPAT_CHAIN_INSERTER_ATTEMPTS !== 0) {
+        return;
+      }
+
+      state.attempts += 1;
+
+      if (state.holding === null) {
+        const source = {
+          x: entity.pos.x + offsetFrom(entity.rot).x * -1,
+          y: entity.pos.y + offsetFrom(entity.rot).y * -1,
+        };
+        const belt = findKindAt(sim, source, COMPAT_CHAIN_BELT_KIND);
+        const beltState = asState<CompatBeltState>(belt?.state);
+
+        if (beltState === undefined || beltState.item === null) {
+          state.blockedPickups += 1;
+          return;
+        }
+
+        state.holding = beltState.item;
+        beltState.item = null;
+        state.pickups += 1;
+        return;
+      }
+
+      const target = {
+        x: entity.pos.x + offsetFrom(entity.rot).x,
+        y: entity.pos.y + offsetFrom(entity.rot).y,
+      };
+      const furnace = findKindAt(sim, target, COMPAT_CHAIN_FURNACE_KIND);
+      const furnaceState = asState<CompatFurnaceState>(furnace?.state);
+
+      if (
+        furnaceState === undefined ||
+        furnaceState.input !== null ||
+        furnaceState.crafting ||
+        furnaceState.output !== null
+      ) {
+        state.blockedDrops += 1;
+        return;
+      }
+
+      furnaceState.input = state.holding;
+      state.holding = null;
+      state.drops += 1;
+    },
+  });
+
+  registerEntity(COMPAT_CHAIN_FURNACE_KIND, {
+    create: () => ({
+      input: null as ItemKind | null,
+      output: null as ItemKind | null,
+      crafting: false,
+      progressTicks: 0,
+      completed: 0,
+    }),
+    update: (entity) => {
+      const state = asState<CompatFurnaceState>(entity.state);
+      if (state === undefined) {
+        return;
+      }
+
+      if (state.output !== null) {
+        return;
+      }
+
+      if (!state.crafting) {
+        if (state.input !== "iron-ore") {
+          return;
+        }
+
+        state.input = null;
+        state.crafting = true;
+        state.progressTicks = 0;
+        return;
+      }
+
+      if (state.progressTicks < COMPAT_CHAIN_FURNACE_SMELT_TICKS) {
+        state.progressTicks += 1;
+      }
+
+      if (state.progressTicks < COMPAT_CHAIN_FURNACE_SMELT_TICKS) {
+        return;
+      }
+
+      state.output = "iron-plate";
+      state.crafting = false;
+      state.progressTicks = 0;
+      state.completed += 1;
+    },
+  });
+
+  cadenceChainPathRegistered = true;
 };
 
 type Listener = (event: unknown) => void;
@@ -608,5 +808,198 @@ describe("sim API compatibility", () => {
     expect(first.furnace.completed).toBe(1);
     expect(first.inserter.holding).toBe("iron-ore");
     expect(first.belt.item).toBeNull();
+  });
+
+  it("enforces exact miner->belt->inserter->furnace progression at 60/20/15/180 boundaries", () => {
+    ensureCadenceChainDefinitions();
+
+    const sim = createSim({ width: 10, height: 3, seed: 12 });
+    const minerId = sim.addEntity({ kind: COMPAT_CHAIN_MINER_KIND, pos: { x: 1, y: 1 }, rot: "E" });
+    const beltId = sim.addEntity({ kind: COMPAT_CHAIN_BELT_KIND, pos: { x: 2, y: 1 }, rot: "E" });
+    const inserterId = sim.addEntity({
+      kind: COMPAT_CHAIN_INSERTER_KIND,
+      pos: { x: 3, y: 1 },
+      rot: "E",
+    });
+    const furnaceId = sim.addEntity({ kind: COMPAT_CHAIN_FURNACE_KIND, pos: { x: 4, y: 1 }, rot: "E" });
+
+    const miner = sim.getEntityById(minerId);
+    const beltEntity = sim.getEntityById(beltId);
+    const inserter = sim.getEntityById(inserterId);
+    const furnace = sim.getEntityById(furnaceId);
+
+    if (miner?.state === undefined || beltEntity?.state === undefined || inserter?.state === undefined || furnace?.state === undefined) {
+      throw new Error("Expected all cadence entities to have states");
+    }
+
+    const minerState = asState<CompatMinerState>(miner.state);
+    const beltState = asState<CompatCadenceBeltState>(beltEntity.state);
+    const inserterState = asState<CompatInserterState>(inserter.state);
+    const furnaceState = asState<CompatFurnaceState>(furnace.state);
+
+    if (minerState === undefined || beltState === undefined || inserterState === undefined || furnaceState === undefined) {
+      throw new Error("Expected typed entity states for cadence-chain entities");
+    }
+
+    let tick = 0;
+    const advanceTo = (targetTick: number): void => {
+      if (targetTick < tick) {
+        throw new Error(`advanceTo target ${targetTick} is before current tick ${tick}`);
+      }
+      for (let i = 0; i < targetTick - tick; i += 1) {
+        sim.step(TICK_MS);
+      }
+      tick = targetTick;
+    };
+
+    advanceTo(14);
+    expect(tick).toBe(14);
+    expect(minerState).toMatchObject({ ticks: 14, holding: "iron-ore", moved: 0, attempts: 0 });
+    expect(beltState).toMatchObject({ ticks: 14, item: null, moved: 0 });
+    expect(inserterState).toMatchObject({
+      ticks: 14,
+      holding: null,
+      pickups: 0,
+      drops: 0,
+      attempts: 0,
+    });
+    expect(furnaceState).toMatchObject({ input: null, output: null, crafting: false, progressTicks: 0, completed: 0 });
+
+    advanceTo(15);
+    expect(tick).toBe(15);
+    expect(beltState).toMatchObject({ item: null, moved: 0 });
+    expect(furnaceState.crafting).toBe(false);
+
+    advanceTo(20);
+    expect(tick).toBe(20);
+    expect(inserterState).toMatchObject({ attempts: 1 });
+    expect(inserterState.holding).toBeNull();
+
+    advanceTo(59);
+    expect(tick).toBe(59);
+    expect(minerState).toMatchObject({ attempts: 0, moved: 0 });
+    expect(beltState.item).toBeNull();
+    expect(inserterState.holding).toBeNull();
+    expect(furnaceState.crafting).toBe(false);
+
+    advanceTo(60);
+    expect(tick).toBe(60);
+    expect(minerState).toMatchObject({ attempts: 1, moved: 1 });
+    expect(beltState).toMatchObject({ item: null });
+    expect(inserterState).toMatchObject({ attempts: 3, pickups: 0, drops: 1, holding: null });
+    expect(furnaceState).toMatchObject({
+      crafting: true,
+      completed: 0,
+      input: null,
+      output: null,
+      progressTicks: 0,
+    });
+
+    advanceTo(61);
+    expect(tick).toBe(61);
+    expect(furnaceState).toMatchObject({ crafting: true, progressTicks: 1, output: null });
+
+    advanceTo(239);
+    expect(tick).toBe(239);
+    expect(furnaceState).toMatchObject({ crafting: true, progressTicks: 179, output: null, completed: 0 });
+
+    advanceTo(240);
+    expect(tick).toBe(240);
+    expect(furnaceState).toMatchObject({ output: "iron-plate", progressTicks: 0, completed: 1 });
+
+    advanceTo(241);
+    expect(tick).toBe(241);
+    expect(furnaceState).toMatchObject({ output: "iron-plate", crafting: false, completed: 1 });
+  });
+
+  it("halts chain movement during pause and preserves prior cadence offsets after resume", () => {
+    ensureCadenceChainDefinitions();
+
+    const runScenario = (withPause: boolean): string => {
+      const sim = createSim({ width: 10, height: 3, seed: 13 });
+
+      const minerId = sim.addEntity({ kind: COMPAT_CHAIN_MINER_KIND, pos: { x: 1, y: 1 }, rot: "E" });
+      const beltId = sim.addEntity({ kind: COMPAT_CHAIN_BELT_KIND, pos: { x: 2, y: 1 }, rot: "E" });
+      const inserterId = sim.addEntity({ kind: COMPAT_CHAIN_INSERTER_KIND, pos: { x: 3, y: 1 }, rot: "E" });
+      const furnaceId = sim.addEntity({ kind: COMPAT_CHAIN_FURNACE_KIND, pos: { x: 4, y: 1 }, rot: "E" });
+
+      const miner = sim.getEntityById(minerId);
+      const belt = sim.getEntityById(beltId);
+      const inserter = sim.getEntityById(inserterId);
+      const furnace = sim.getEntityById(furnaceId);
+
+      if (miner?.state === undefined || belt?.state === undefined || inserter?.state === undefined || furnace?.state === undefined) {
+        throw new Error("Expected all cadence entities to have states");
+      }
+
+      const tickStates: Array<{
+        tick: number;
+        miner: CompatMinerState;
+        belt: CompatCadenceBeltState;
+        inserter: CompatInserterState;
+        furnace: CompatFurnaceState;
+      }> = [];
+
+      const currentSnapshot = (tick: number): {
+        tick: number;
+        miner: CompatMinerState;
+        belt: CompatCadenceBeltState;
+        inserter: CompatInserterState;
+        furnace: CompatFurnaceState;
+      } => {
+        const minerState = asState<CompatMinerState>(miner.state);
+        const beltState = asState<CompatCadenceBeltState>(belt.state);
+        const inserterState = asState<CompatInserterState>(inserter.state);
+        const furnaceState = asState<CompatFurnaceState>(furnace.state);
+
+        if (minerState === undefined || beltState === undefined || inserterState === undefined || furnaceState === undefined) {
+          throw new Error("Expected typed entity states for cadence-chain entities");
+        }
+
+        return {
+          tick,
+          miner: { ...minerState },
+          belt: { ...beltState },
+          inserter: { ...inserterState },
+          furnace: { ...furnaceState },
+        };
+      };
+
+      const addSnapshot = (tick: number): void => {
+        tickStates.push(currentSnapshot(tick));
+      };
+
+      const stepTicks = (ticks: number): void => {
+        for (let i = 0; i < ticks; i += 1) {
+          sim.step(TICK_MS);
+        }
+      };
+
+      stepTicks(59);
+      addSnapshot(59);
+
+      if (withPause) {
+        const pausedReference = JSON.stringify(currentSnapshot(59));
+
+        sim.pause();
+        stepTicks(45);
+        sim.resume();
+        const pausedState = JSON.stringify(currentSnapshot(59));
+
+        expect(pausedState).toBe(pausedReference);
+      }
+
+      stepTicks(181);
+      addSnapshot(240);
+      stepTicks(1);
+      addSnapshot(241);
+
+      return JSON.stringify(tickStates);
+    };
+
+    const withoutPause = runScenario(false);
+    const withPause = runScenario(true);
+
+    expect(withPause).toBe(withoutPause);
   });
 });
