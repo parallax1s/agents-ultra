@@ -358,24 +358,52 @@ describe('Transport cadence regressions', () => {
 
     advance(19);
     expect(tick).toBe(19);
-    expect(getState<InserterState>(sim, inserterId).holding).toBeNull();
+    expect(getState<InserterState>(sim, inserterId)).toMatchObject({
+      attempts: 0,
+      pickups: 0,
+      drops: 0,
+      blockedPickups: 0,
+      blockedDrops: 0,
+      holding: null,
+    });
     expect(getState<BeltState>(sim, feedBeltId).item).toBe('iron-ore');
 
     advance(1);
     expect(tick).toBe(20);
-    expect(getState<InserterState>(sim, inserterId)).toMatchObject({ attempts: 1, pickups: 1, holding: 'iron-ore' });
+    expect(getState<InserterState>(sim, inserterId)).toMatchObject({
+      attempts: 1,
+      pickups: 1,
+      drops: 0,
+      blockedPickups: 0,
+      blockedDrops: 0,
+      holding: 'iron-ore',
+    });
     expect(getState<BeltState>(sim, feedBeltId).item).toBeNull();
 
     getState<BeltState>(sim, feedBeltId).item = 'iron-ore';
 
     advance(19);
     expect(tick).toBe(39);
-    expect(getState<InserterState>(sim, inserterId).holding).toBe('iron-ore');
+    expect(getState<InserterState>(sim, inserterId)).toMatchObject({
+      attempts: 1,
+      pickups: 1,
+      drops: 1,
+      blockedPickups: 0,
+      blockedDrops: 0,
+      holding: 'iron-ore',
+    });
     expect(getState<FurnaceState>(sim, furnaceId)).toMatchObject({ input: null, crafting: false, output: null, completed: 0 });
 
     advance(1);
     expect(tick).toBe(40);
-    expect(getState<InserterState>(sim, inserterId)).toMatchObject({ drops: 1, holding: null });
+    expect(getState<InserterState>(sim, inserterId)).toMatchObject({
+      attempts: 2,
+      pickups: 1,
+      drops: 1,
+      blockedPickups: 0,
+      blockedDrops: 0,
+      holding: null,
+    });
     expect(getState<FurnaceState>(sim, furnaceId)).toMatchObject({ input: 'iron-ore', crafting: false, output: null, completed: 0 });
 
     advance(1);
@@ -384,31 +412,97 @@ describe('Transport cadence regressions', () => {
 
     advance(19);
     expect(tick).toBe(60);
-    expect(getState<InserterState>(sim, inserterId)).toMatchObject({ pickups: 2, holding: 'iron-ore' });
+    expect(getState<InserterState>(sim, inserterId)).toMatchObject({
+      attempts: 3,
+      pickups: 2,
+      drops: 1,
+      blockedPickups: 0,
+      blockedDrops: 0,
+      holding: 'iron-ore',
+    });
 
-    advance(160);
+    advance(19);
+    expect(tick).toBe(79);
+    expect(getState<InserterState>(sim, inserterId)).toMatchObject({
+      attempts: 3,
+      pickups: 2,
+      drops: 1,
+      blockedPickups: 0,
+      blockedDrops: 0,
+      holding: 'iron-ore',
+    });
+
+    advance(1);
+    expect(tick).toBe(80);
+    expect(getState<InserterState>(sim, inserterId)).toMatchObject({
+      attempts: 4,
+      pickups: 2,
+      drops: 1,
+      blockedPickups: 0,
+      blockedDrops: 1,
+      holding: 'iron-ore',
+    });
+
+    advance(140);
     expect(tick).toBe(220);
+    expect(getState<InserterState>(sim, inserterId)).toMatchObject({
+      attempts: 11,
+      pickups: 2,
+      drops: 1,
+      blockedPickups: 0,
+      blockedDrops: 8,
+      holding: 'iron-ore',
+    });
     expect(getState<FurnaceState>(sim, furnaceId)).toMatchObject({ crafting: true, progressTicks: 179, output: null, completed: 0 });
 
     advance(1);
     expect(tick).toBe(221);
+    expect(getState<InserterState>(sim, inserterId)).toMatchObject({
+      attempts: 11,
+      pickups: 2,
+      drops: 1,
+      blockedPickups: 0,
+      blockedDrops: 8,
+      holding: 'iron-ore',
+    });
     expect(getState<FurnaceState>(sim, furnaceId)).toMatchObject({ crafting: false, progressTicks: 0, output: 'iron-plate', completed: 1 });
 
     advance(39);
     expect(tick).toBe(260);
-    expect(getState<InserterState>(sim, inserterId).holding).toBe('iron-ore');
+    expect(getState<InserterState>(sim, inserterId)).toMatchObject({
+      attempts: 13,
+      pickups: 2,
+      drops: 1,
+      blockedPickups: 0,
+      blockedDrops: 10,
+      holding: 'iron-ore',
+    });
     expect(getState<FurnaceState>(sim, furnaceId).output).toBe('iron-plate');
 
     getState<FurnaceState>(sim, furnaceId).output = null;
 
     advance(19);
     expect(tick).toBe(279);
-    expect(getState<InserterState>(sim, inserterId).holding).toBe('iron-ore');
-    expect(getState<FurnaceState>(sim, furnaceId).input).toBeNull();
+    expect(getState<InserterState>(sim, inserterId)).toMatchObject({
+      attempts: 13,
+      pickups: 2,
+      drops: 1,
+      blockedPickups: 0,
+      blockedDrops: 10,
+      holding: 'iron-ore',
+    });
+    expect(getState<FurnaceState>(sim, furnaceId).output).toBeNull();
 
     advance(1);
     expect(tick).toBe(280);
-    expect(getState<InserterState>(sim, inserterId)).toMatchObject({ drops: 2, holding: null });
+    expect(getState<InserterState>(sim, inserterId)).toMatchObject({
+      attempts: 14,
+      pickups: 2,
+      drops: 2,
+      blockedPickups: 0,
+      blockedDrops: 10,
+      holding: null,
+    });
     expect(getState<FurnaceState>(sim, furnaceId)).toMatchObject({ input: 'iron-ore', output: null, completed: 1 });
   });
 });
