@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 
 const localPlaywrightBinary = resolve(process.cwd(), "node_modules/.bin/playwright");
+const passthroughArgs = process.argv.slice(2).filter((arg) => arg !== "--strict");
 const strictMode =
   process.argv.includes("--strict") ||
   process.env.REQUIRE_PLAYWRIGHT_E2E === "1" ||
@@ -21,14 +22,10 @@ if (!existsSync(localPlaywrightBinary)) {
   process.exit(0);
 }
 
-const result = spawnSync(
-  `${localPlaywrightBinary} test --config=playwright.config.ts`,
-  {
-    shell: true,
-    stdio: "pipe",
-    encoding: "utf8",
-  },
-);
+const result = spawnSync(localPlaywrightBinary, ["test", "--config=playwright.config.ts", ...passthroughArgs], {
+  stdio: "pipe",
+  encoding: "utf8",
+});
 
 if (result.stdout) {
   process.stdout.write(result.stdout);
