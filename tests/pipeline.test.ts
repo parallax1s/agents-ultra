@@ -413,7 +413,7 @@ describe('Transport cadence regressions', () => {
       blockedDrops: 0,
       holding: 'iron-ore',
     });
-    expect([0, 1]).toContain(inserter.drops);
+    expect(inserter.drops).toBe(0);
     expect(feedBelt.item).toBeNull();
 
     feedBelt.item = 'iron-ore';
@@ -427,7 +427,7 @@ describe('Transport cadence regressions', () => {
       blockedDrops: 0,
       holding: 'iron-ore',
     });
-    expect([0, 1]).toContain(inserter.drops);
+    expect(inserter.drops).toBe(0);
 
     advanceTo(40);
     expect(tick).toBe(40);
