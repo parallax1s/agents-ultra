@@ -189,6 +189,59 @@ describe("simulation registry and loop", () => {
     expect(updateCalls).toBe(2);
   });
 
+  test("advances fixed-step updates deterministically for legacy addEntity(kind, init)", () => {
+    const kind = nextKind("miner-compat-fixed");
+    const tickMs = 1000 / 60;
+    let updateCalls = 0;
+
+    registerEntity(kind, {
+      create: () => ({ updates: 0 }),
+      update: (entity: unknown) => {
+        updateCalls += 1;
+
+        if (typeof entity !== "object" || entity === null || !("state" in entity)) {
+          throw new Error("Unexpected entity shape passed to update");
+        }
+
+        const entityWithState = entity as { state?: { updates?: number } };
+        if (!entityWithState.state) {
+          entityWithState.state = { updates: 0 };
+        }
+
+        const current = entityWithState.state.updates ?? 0;
+        entityWithState.state.updates = current + 1;
+      },
+    });
+
+    const sim = createSim({ seed: 11, width: 16, height: 16 });
+    const id = sim.addEntity(kind, {
+      pos: { x: 2, y: 2 },
+    });
+
+    const entity = sim.getEntityById(id);
+    expect(getUpdateCount(entity)).toBe(0);
+    expect(sim.tickCount).toBe(0);
+
+    sim.step(tickMs / 4);
+    expect(updateCalls).toBe(0);
+    expect(sim.tickCount).toBe(0);
+
+    sim.step(tickMs / 4);
+    expect(updateCalls).toBe(0);
+    expect(sim.tickCount).toBe(0);
+
+    sim.step(tickMs / 2);
+    expect(updateCalls).toBe(1);
+    expect(sim.tickCount).toBe(1);
+    expect(getUpdateCount(sim.getEntityById(id))).toBe(1);
+
+    sim.step((2 * tickMs) + tickMs / 2);
+    expect(updateCalls).toBe(3);
+    expect(sim.tickCount).toBe(3);
+    expect(sim.elapsedMs).toBeCloseTo(tickMs * 3);
+    expect(getUpdateCount(sim.getEntityById(id))).toBe(3);
+  });
+
   test("halts advancement while paused and resumes without dropped or duplicated ticks", () => {
     const kind = nextKind("miner-pause");
     const tickMs = 1000 / 60;
@@ -302,6 +355,46 @@ describe("simulation registry and loop", () => {
 
     detachRotate();
     stage.emit("keydown", { code: "KeyR", repeat: false });
+    expect(entity.rot).toBe("S");
+
+    controller.destroy();
+  });
+
+  test("applies deterministic rotation with legacy two-arg addEntity entrypoint", () => {
+    const kind = nextKind("miner-rotate-compat-input");
+    registerEntity(kind, {
+      create: () => ({}),
+      update: () => {
+        // no-op
+      },
+    });
+
+    const sim = createSim();
+    const minerId = sim.addEntity(kind, { pos: { x: 1, y: 1 } });
+    const entity = sim.getEntityById(minerId) as { rot: Direction };
+
+    const stage = createMockInputStage();
+    const controller = attachInput({
+      app: {},
+      stage,
+      metrics: { tileSize: 16, gridSize: { cols: 8, rows: 8 } },
+    });
+
+    const detachRotate = controller.onRotate(() => {
+      entity.rot = rotateDirection(entity.rot);
+    });
+    expect(entity.rot).toBe("N");
+
+    stage.emit("keydown", { code: "KeyR", repeat: false });
+    stage.emit("keydown", { key: "r", repeat: false });
+    expect(entity.rot).toBe("S");
+
+    stage.emit("keydown", { code: "KeyR", repeat: true });
+    stage.emit("keydown", { key: "x", repeat: false });
+    expect(entity.rot).toBe("S");
+
+    detachRotate();
+    stage.emit("keydown", { key: "R", repeat: false });
     expect(entity.rot).toBe("S");
 
     controller.destroy();
