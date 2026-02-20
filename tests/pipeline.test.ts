@@ -48,6 +48,7 @@ type BeltState = {
   attempts: number;
   moved: number;
   blocked: number;
+  _pipelineTestReceivedTick?: number;
 };
 
 type InserterState = {
@@ -175,21 +176,42 @@ const ensureTransportCadenceDefinitions = (): void => {
         }
 
         state.ticks += 1;
-        if (state.ticks % BELT_ATTEMPT_TICKS !== 0 || state.item === null) {
+        if (state.ticks % BELT_ATTEMPT_TICKS !== 0) {
+          return;
+        }
+
+        const receivesThisTick = state._pipelineTestReceivedTick === state.ticks;
+        if (state.item === null && !receivesThisTick) {
           return;
         }
 
         state.attempts += 1;
+        if (receivesThisTick) {
+          const ahead = add(entity.pos, DIR_V[entity.rot]);
+          const targetBelt = firstKindAt(sim, ahead, TEST_BELT_KIND);
+          const targetState = asState<BeltState>(targetBelt?.state);
+
+          if (!targetState || targetState.item !== null || targetState._pipelineTestReceivedTick === state.ticks) {
+            state.blocked += 1;
+          }
+
+          return;
+        }
 
         const ahead = add(entity.pos, DIR_V[entity.rot]);
         const targetBelt = firstKindAt(sim, ahead, TEST_BELT_KIND);
         const targetState = asState<BeltState>(targetBelt?.state);
-        if (!targetState || targetState.item !== null) {
+        if (
+          !targetState ||
+          targetState.item !== null ||
+          targetState._pipelineTestReceivedTick === state.ticks
+        ) {
           state.blocked += 1;
           return;
         }
 
         targetState.item = state.item;
+        targetState._pipelineTestReceivedTick = state.ticks;
         state.item = null;
         state.moved += 1;
       },

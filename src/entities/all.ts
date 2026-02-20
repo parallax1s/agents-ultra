@@ -437,17 +437,11 @@ const canTransferToBeltTarget = (
 
   if (target.kind === "belt") {
     const targetState = ensureBeltState(target);
-    if (targetState.item === null) {
-      return true;
+    if (targetState.item !== null) {
+      return false;
     }
 
-    const onwardTarget = chooseBeltTransferTarget(
-      sim,
-      target,
-      reservedTargetIds,
-      resolutions,
-    );
-    return onwardTarget !== null;
+    return true;
   }
 
   if (target.kind === "inserter") {
