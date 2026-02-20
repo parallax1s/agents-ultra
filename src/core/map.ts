@@ -189,10 +189,23 @@ export function createMap(width: number, height: number, seed: number | string):
   const occupants = new Map<string, MapOccupantKind>();
   const lastIngressTickByTile = new Map<string, number>();
   let currentTransferTick = 0;
+  let isTransferTickCommitScheduled = false;
   const random = createPrng(seed);
   const keyForTile = (x: number, y: number): string => `${x},${y}`;
   const tileCopy = (tile: GridCoord): GridCoord => ({ x: tile.x, y: tile.y });
   const isIntegerCoord = (value: number): value is number => Number.isInteger(value);
+
+  const scheduleTransferTickCommit = (): void => {
+    if (isTransferTickCommitScheduled) {
+      return;
+    }
+
+    isTransferTickCommitScheduled = true;
+    queueMicrotask(() => {
+      currentTransferTick += 1;
+      isTransferTickCommitScheduled = false;
+    });
+  };
 
   const isPlaceableCoord = (x: number, y: number): boolean => isIntegerCoord(x) && isIntegerCoord(y) && isWithinBounds(x, y);
   const occupantAt = (tile: GridCoord): MapOccupantKind | undefined => occupants.get(keyForTile(tile.x, tile.y));
@@ -567,7 +580,7 @@ export function createMap(width: number, height: number, seed: number | string):
       outcomes[candidate.index] = makeTransferSuccess(kind, candidate.from, candidate.to);
     }
 
-    currentTransferTick += 1;
+    scheduleTransferTickCommit();
 
     return outcomes;
   };
