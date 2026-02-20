@@ -1184,4 +1184,163 @@ describe("sim API compatibility", () => {
       moved: 0,
     });
   });
+
+  it("keeps middle belt state for the full 15-tick cadence window", () => {
+    const sourceBeltKind = nextKind("compat-belt-c15-source");
+    const middleBeltKind = nextKind("compat-belt-c15-middle");
+    const targetBeltKind = nextKind("compat-belt-c15-target");
+    type CompatCadenceWindowBeltState = CompatCadenceBeltState & { blocked: number };
+
+    const registerCadenceWindowBelt = (kind: string, targetKind: string | null): void => {
+      registerEntity(kind, {
+        create: () => ({
+          ticks: 0,
+          item: null as ItemKind | null,
+          attempts: 0,
+          moved: 0,
+          blocked: 0,
+        }),
+        update: (entity, _dtMs, sim) => {
+          const state = asState<CompatCadenceWindowBeltState>(entity.state);
+          if (state === undefined) {
+            return;
+          }
+
+          state.ticks += 1;
+          if (state.ticks % COMPAT_CHAIN_BELT_ATTEMPTS !== 0 || state.item === null) {
+            return;
+          }
+
+          if (targetKind === null) {
+            return;
+          }
+
+          const ahead = {
+            x: entity.pos.x + offsetFrom(entity.rot).x,
+            y: entity.pos.y + offsetFrom(entity.rot).y,
+          };
+          const target = findKindAt(sim, ahead, targetKind);
+          const targetState = asState<CompatCadenceWindowBeltState>(target?.state);
+
+          if (!targetState || targetState.item !== null) {
+            state.blocked += 1;
+            return;
+          }
+
+          targetState.item = state.item;
+          state.item = null;
+          state.moved += 1;
+          state.attempts += 1;
+        },
+      });
+    };
+
+    registerCadenceWindowBelt(sourceBeltKind, middleBeltKind);
+    registerCadenceWindowBelt(middleBeltKind, targetBeltKind);
+    registerCadenceWindowBelt(targetBeltKind, null);
+
+    const sim = createSim({ width: 8, height: 3, seed: 16 });
+
+    const sourceBeltId = sim.addEntity({ kind: sourceBeltKind, pos: { x: 1, y: 1 }, rot: "E" });
+    const middleBeltId = sim.addEntity({ kind: middleBeltKind, pos: { x: 2, y: 1 }, rot: "E" });
+    const targetBeltId = sim.addEntity({ kind: targetBeltKind, pos: { x: 3, y: 1 }, rot: "E" });
+
+    const sourceBelt = sim.getEntityById(sourceBeltId);
+    const middleBelt = sim.getEntityById(middleBeltId);
+    const targetBelt = sim.getEntityById(targetBeltId);
+    if (sourceBelt?.state === undefined || middleBelt?.state === undefined || targetBelt?.state === undefined) {
+      throw new Error("Expected all cadence-window test belts to have state");
+    }
+
+    const sourceState = asState<CompatCadenceWindowBeltState>(sourceBelt.state);
+    const middleState = asState<CompatCadenceWindowBeltState>(middleBelt.state);
+    const targetState = asState<CompatCadenceWindowBeltState>(targetBelt.state);
+    if (sourceState === undefined || middleState === undefined || targetState === undefined) {
+      throw new Error("Expected typed state for cadence-window belts");
+    }
+
+    sourceState.item = "iron-ore";
+
+    const advanceTo = (targetTick: number): void => {
+      if (targetTick < sim.tickCount) {
+        throw new Error(`advanceTo target ${targetTick} is before current tick ${sim.tickCount}`);
+      }
+
+      for (let tick = sim.tickCount; tick < targetTick; tick += 1) {
+        sim.step(TICK_MS);
+      }
+    };
+
+    advanceTo(14);
+    expect(sim.tickCount).toBe(14);
+    expect(sourceState).toMatchObject({
+      item: "iron-ore",
+      attempts: 0,
+      moved: 0,
+      blocked: 0,
+      ticks: 14,
+    });
+    expect(middleState).toMatchObject({
+      item: null,
+      attempts: 0,
+      moved: 0,
+      blocked: 0,
+      ticks: 14,
+    });
+    expect(targetState).toMatchObject({
+      item: null,
+      attempts: 0,
+      moved: 0,
+      blocked: 0,
+      ticks: 14,
+    });
+
+    advanceTo(15);
+    expect(sim.tickCount).toBe(15);
+    expect(sourceState).toMatchObject({
+      item: null,
+      attempts: 1,
+      moved: 1,
+      blocked: 0,
+      ticks: 15,
+    });
+    expect(middleState).toMatchObject({
+      item: "iron-ore",
+      attempts: 0,
+      moved: 0,
+      blocked: 0,
+      ticks: 15,
+    });
+    expect(targetState).toMatchObject({
+      item: null,
+      attempts: 0,
+      moved: 0,
+      blocked: 0,
+      ticks: 15,
+    });
+
+    advanceTo(30);
+    expect(sim.tickCount).toBe(30);
+    expect(sourceState).toMatchObject({
+      item: null,
+      attempts: 1,
+      moved: 1,
+      blocked: 0,
+      ticks: 30,
+    });
+    expect(middleState).toMatchObject({
+      item: null,
+      attempts: 1,
+      moved: 1,
+      blocked: 0,
+      ticks: 30,
+    });
+    expect(targetState).toMatchObject({
+      item: "iron-ore",
+      attempts: 0,
+      moved: 0,
+      blocked: 0,
+      ticks: 30,
+    });
+  });
 });
