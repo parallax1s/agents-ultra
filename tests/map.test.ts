@@ -350,3 +350,80 @@ describe("placement controller validation", () => {
     expect(snapshotPlaced()).toBe("");
   });
 });
+
+describe("map transfer operations", () => {
+  it("selects a stable winner for same-destination contention based on source order", () => {
+    const runTransferContest = (requests: { from: { x: number; y: number }; to: { x: number; y: number } }[]) => {
+      const map = createMap(6, 6, 123);
+      map.place("belt", { x: 2, y: 0 });
+      map.place("belt", { x: 0, y: 1 });
+      map.place("belt", { x: 1, y: 0 });
+
+      const outcomes = map.transferMany(requests);
+      return { map, outcomes };
+    };
+
+    const destination = { x: 1, y: 1 };
+    const forwardOrder = [
+      { from: { x: 2, y: 0 }, to: destination },
+      { from: { x: 0, y: 1 }, to: destination },
+      { from: { x: 1, y: 0 }, to: destination },
+    ];
+    const reverseOrder = [...forwardOrder].reverse();
+
+    const forward = runTransferContest(forwardOrder);
+    const reverse = runTransferContest(reverseOrder);
+
+    const forwardSuccess = forward.outcomes.find((result): result is { success: true; from: { x: number; y: number } } =>
+      result.success);
+    expect(forwardSuccess).toBeDefined();
+    expect(forwardSuccess?.from).toEqual({ x: 1, y: 0 });
+
+    const reverseSuccess = reverse.outcomes.find((result): result is { success: true; from: { x: number; y: number } } =>
+      result.success);
+    expect(reverseSuccess).toBeDefined();
+    expect(reverseSuccess?.from).toEqual({ x: 1, y: 0 });
+
+    expect(forward.outcomes.filter((result) => result.success)).toHaveLength(1);
+    expect(reverse.outcomes.filter((result) => result.success)).toHaveLength(1);
+    expect(forward.outcomes.filter((result) => !result.success && result.reason === "occupied-destination")).toHaveLength(2);
+    expect(reverse.outcomes.filter((result) => !result.success && result.reason === "occupied-destination")).toHaveLength(2);
+
+    expect(forward.map.hasEntityAt(destination)).toBe(true);
+    expect(reverse.map.hasEntityAt(destination)).toBe(true);
+    expect(forward.map.hasEntityAt({ x: 1, y: 0 })).toBe(false);
+    expect(reverse.map.hasEntityAt({ x: 1, y: 0 })).toBe(false);
+    expect(forward.map.hasEntityAt({ x: 0, y: 1 })).toBe(true);
+    expect(reverse.map.hasEntityAt({ x: 0, y: 1 })).toBe(true);
+    expect(forward.map.hasEntityAt({ x: 2, y: 0 })).toBe(true);
+    expect(reverse.map.hasEntityAt({ x: 2, y: 0 })).toBe(true);
+  });
+
+  it("keeps loser sources intact while enforcing destination capacity", () => {
+    const map = createMap(6, 6, 123);
+
+    map.place("belt", { x: 0, y: 0 });
+    map.place("belt", { x: 2, y: 0 });
+    map.place("belt", { x: 4, y: 0 });
+
+    const destination = { x: 1, y: 0 };
+    const outcomes = map.transferMany([
+      { from: { x: 2, y: 0 }, to: destination },
+      { from: { x: 0, y: 0 }, to: destination },
+      { from: { x: 4, y: 0 }, to: destination },
+    ]);
+
+    expect(outcomes).toHaveLength(3);
+    expect(outcomes.filter((result) => result.success)).toHaveLength(1);
+    expect(outcomes.filter((result) => !result.success)).toHaveLength(2);
+    expect(outcomes.filter((result) => !result.success && result.reason === "occupied-destination")).toHaveLength(2);
+
+    expect(map.hasEntityAt(destination)).toBe(true);
+
+    const loserFromTop = map.transfer({ x: 4, y: 0 }, { x: 4, y: 1 });
+    expect(loserFromTop.success).toBe(true);
+
+    const loserFromBottom = map.transfer({ x: 2, y: 0 }, { x: 2, y: 1 });
+    expect(loserFromBottom.success).toBe(true);
+  });
+});

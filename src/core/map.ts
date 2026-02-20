@@ -41,6 +41,35 @@ export type MapRemovalFailureResult = {
   tile: GridCoord;
 };
 
+export type MapTransferFailureReason =
+  | "out-of-bounds"
+  | "self-transfer"
+  | "empty-source"
+  | "occupied-destination";
+
+export type MapTransferRequest = {
+  from: GridCoord;
+  to: GridCoord;
+};
+
+export type MapTransferSuccessResult = {
+  success: true;
+  ok: true;
+  kind: MapOccupantKind;
+  from: GridCoord;
+  to: GridCoord;
+};
+
+export type MapTransferFailureResult = {
+  success: false;
+  ok: false;
+  reason: MapTransferFailureReason;
+  from: GridCoord;
+  to: GridCoord;
+};
+
+export type MapTransferResult = MapTransferSuccessResult | MapTransferFailureResult;
+
 export type MapRemovalResult = MapRemovalSuccessResult | MapRemovalFailureResult;
 
 export interface GeneratedMap {
@@ -54,6 +83,8 @@ export interface GeneratedMap {
   placeEntity: (kind: MapOccupantKind, tile: GridCoord) => MapPlacementResult;
   remove: (tile: GridCoord) => MapRemovalResult;
   removeEntity: (tile: GridCoord) => MapRemovalResult;
+  transfer: (from: GridCoord, to: GridCoord) => MapTransferResult;
+  transferMany: (transfers: ReadonlyArray<MapTransferRequest>) => MapTransferResult[];
 }
 
 type OrderedEntity = {
@@ -64,6 +95,30 @@ type OrderedEntity = {
 const toStableEntityId = (id: string): number => {
   const maybeNumber = Number(id);
   return Number.isFinite(maybeNumber) && Number.isInteger(maybeNumber) ? maybeNumber : Number.MAX_SAFE_INTEGER;
+};
+
+type TransferCandidate = {
+  index: number;
+  from: GridCoord;
+  to: GridCoord;
+  fromKey: string;
+  toKey: string;
+};
+
+const compareTransferSource = (left: TransferCandidate, right: TransferCandidate): number => {
+  if (left.from.y !== right.from.y) {
+    return left.from.y - right.from.y;
+  }
+
+  if (left.from.x !== right.from.x) {
+    return left.from.x - right.from.x;
+  }
+
+  if (left.fromKey !== right.fromKey) {
+    return left.fromKey < right.fromKey ? -1 : 1;
+  }
+
+  return left.index - right.index;
 };
 
 const compareId = (left: string, right: string): number => {
@@ -170,6 +225,26 @@ export function createMap(width: number, height: number, seed: number | string):
     ok: true,
     removedKind,
     tile: tileCopy(tile),
+  });
+
+  const makeTransferFailure = (
+    reason: MapTransferFailureReason,
+    from: GridCoord,
+    to: GridCoord,
+  ): MapTransferFailureResult => ({
+    success: false,
+    ok: false,
+    reason,
+    from: tileCopy(from),
+    to: tileCopy(to),
+  });
+
+  const makeTransferSuccess = (kind: MapOccupantKind, from: GridCoord, to: GridCoord): MapTransferSuccessResult => ({
+    success: true,
+    ok: true,
+    kind,
+    from: tileCopy(from),
+    to: tileCopy(to),
   });
 
   const spawnWidth = Math.min(MIN_SPAWN_SIZE, width);
@@ -316,6 +391,138 @@ export function createMap(width: number, height: number, seed: number | string):
     return makeRemovalSuccess(removedKind, tile);
   };
 
+  const transferMany = (transfers: ReadonlyArray<MapTransferRequest>): MapTransferResult[] => {
+    const outcomes: MapTransferResult[] = new Array(transfers.length);
+
+    const candidates: TransferCandidate[] = [];
+    const usedSources = new Set<string>();
+    const requestsByDestination = new Map<string, TransferCandidate[]>();
+
+    for (let index = 0; index < transfers.length; index += 1) {
+      const transfer = transfers[index];
+      if (transfer === undefined) {
+        continue;
+      }
+
+      if (!isPlaceableCoord(transfer.from.x, transfer.from.y) || !isPlaceableCoord(transfer.to.x, transfer.to.y)) {
+        outcomes[index] = makeTransferFailure("out-of-bounds", transfer.from, transfer.to);
+        continue;
+      }
+
+      if (transfer.from.x === transfer.to.x && transfer.from.y === transfer.to.y) {
+        outcomes[index] = makeTransferFailure("self-transfer", transfer.from, transfer.to);
+        continue;
+      }
+
+      const fromKey = keyForTile(transfer.from.x, transfer.from.y);
+      const toKey = keyForTile(transfer.to.x, transfer.to.y);
+      if (occupantAt(transfer.from) === undefined) {
+        outcomes[index] = makeTransferFailure("empty-source", transfer.from, transfer.to);
+        continue;
+      }
+
+      const candidate: TransferCandidate = {
+        index,
+        from: tileCopy(transfer.from),
+        to: tileCopy(transfer.to),
+        fromKey,
+        toKey,
+      };
+
+      candidates.push(candidate);
+
+      let bucket = requestsByDestination.get(toKey);
+      if (bucket === undefined) {
+        bucket = [];
+        requestsByDestination.set(toKey, bucket);
+      }
+
+      bucket.push(candidate);
+    }
+
+    for (const [destinationKey, contenders] of requestsByDestination) {
+      contenders.sort(compareTransferSource);
+
+      const winner = contenders.find((candidate) => {
+        if (usedSources.has(candidate.fromKey)) {
+          return false;
+        }
+
+        if (occupantAt(candidate.to) !== undefined) {
+          return false;
+        }
+
+        return true;
+      });
+
+      if (winner === undefined) {
+        for (const contender of contenders) {
+          if (outcomes[contender.index] !== undefined) {
+            continue;
+          }
+
+          outcomes[contender.index] = makeTransferFailure(
+            "occupied-destination",
+            contender.from,
+            contender.to,
+          );
+        }
+        continue;
+      }
+
+      usedSources.add(winner.fromKey);
+
+      for (const contender of contenders) {
+        if (outcomes[contender.index] !== undefined) {
+          continue;
+        }
+
+        if (contender.index === winner.index) {
+          continue;
+        }
+
+        outcomes[contender.index] = makeTransferFailure(
+          "occupied-destination",
+          contender.from,
+          contender.to,
+        );
+      }
+    }
+
+    for (const candidate of candidates) {
+      if (outcomes[candidate.index] !== undefined) {
+        continue;
+      }
+
+      const kind = occupantAt(candidate.from);
+      if (kind === undefined) {
+        outcomes[candidate.index] = makeTransferFailure("empty-source", candidate.from, candidate.to);
+        continue;
+      }
+
+      if (occupantAt(candidate.to) !== undefined) {
+        outcomes[candidate.index] = makeTransferFailure("occupied-destination", candidate.from, candidate.to);
+        continue;
+      }
+
+      occupants.delete(candidate.fromKey);
+      occupants.set(candidate.toKey, kind);
+      outcomes[candidate.index] = makeTransferSuccess(kind, candidate.from, candidate.to);
+    }
+
+    return outcomes;
+  };
+
+  const transfer = (from: GridCoord, to: GridCoord): MapTransferResult => {
+    return transferMany([{ from, to }])[0] ?? {
+      success: false,
+      ok: false,
+      reason: "out-of-bounds",
+      from: tileCopy(from),
+      to: tileCopy(to),
+    };
+  };
+
   return {
     width,
     height,
@@ -327,5 +534,7 @@ export function createMap(width: number, height: number, seed: number | string):
     placeEntity: place,
     remove,
     removeEntity: remove,
+    transfer,
+    transferMany,
   };
 }

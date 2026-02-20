@@ -705,6 +705,64 @@ describe("simulation registry and loop", () => {
     expect(fineGrainedChunks).toEqual(singleChunk);
   });
 
+  test("resolves sim-level movement contention deterministically from stable position ordering", () => {
+    const tickMs = 1000 / 60;
+    const kind = nextKind("sim-contender");
+
+    registerEntity(kind, {
+      create: () => ({}),
+      update: (entity: unknown, _dtMs: number, sim) => {
+        if (typeof entity !== "object" || entity === null || !("id" in entity) || !("pos" in entity)) {
+          throw new Error("Unexpected entity shape passed to update");
+        }
+
+        const typedEntity = entity as {
+          id: string;
+          pos: { x: number; y: number };
+        };
+        const target = { x: 1, y: typedEntity.pos.y };
+        const destinationOccupied = (sim.getEntitiesAt?.(target) ?? []).some((candidate) => candidate.id !== typedEntity.id);
+        if (!destinationOccupied) {
+          typedEntity.pos = target;
+        }
+      },
+    });
+
+    const runScenario = (leftFirst: boolean): { left: { x: number; y: number }; right: { x: number; y: number } } => {
+      const sim = createSim({ width: 4, height: 4, seed: 3 });
+      let leftId: string;
+      let rightId: string;
+
+      if (leftFirst) {
+        leftId = sim.addEntity({ kind, pos: { x: 1, y: 0 } } as Parameters<typeof sim.addEntity>[0]);
+        rightId = sim.addEntity({ kind, pos: { x: 2, y: 0 } } as Parameters<typeof sim.addEntity>[0]);
+      } else {
+        rightId = sim.addEntity({ kind, pos: { x: 2, y: 0 } } as Parameters<typeof sim.addEntity>[0]);
+        leftId = sim.addEntity({ kind, pos: { x: 1, y: 0 } } as Parameters<typeof sim.addEntity>[0]);
+      }
+
+      sim.step(tickMs);
+
+      const leftEntity = sim.getEntityById(leftId);
+      const rightEntity = sim.getEntityById(rightId);
+      if (leftEntity === undefined || rightEntity === undefined) {
+        throw new Error("Expected entities to exist after creation");
+      }
+
+      return {
+        left: { x: leftEntity.pos.x, y: leftEntity.pos.y },
+        right: { x: rightEntity.pos.x, y: rightEntity.pos.y },
+      };
+    };
+
+    const leftFirst = runScenario(true);
+    const rightFirst = runScenario(false);
+
+    expect(leftFirst.left).toEqual({ x: 1, y: 0 });
+    expect(leftFirst.right).toEqual({ x: 2, y: 0 });
+    expect(rightFirst).toEqual(leftFirst);
+  });
+
   test("keeps paused intervals mutation-free and resumes from pre-pause state with deterministic remainder handling", () => {
     const kind = nextKind("miner-pause-remainder");
     const tickMs = 1000 / 60;
