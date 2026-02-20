@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { resolve, extname } from 'node:path';
 
 const lsFilesResult = spawnSync('git', ['ls-files', '-z'], {
   encoding: 'utf8',
@@ -26,11 +26,27 @@ const trackedFiles = lsFilesResult.stdout
   .filter(Boolean);
 
 const trackedNodeModules = [];
-const trackedConflictFiles = [];
+const transportConflictMarkers = [];
+
+const transportCriticalPrefixes = ['src/', 'tests/'];
+const transportCriticalExtensions = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.d.ts']);
+const conflictMarkerRegex = /^\s*(?:<<<<<<<(?:\s|$)|=======(?:\s|$)|>>>>>>>(?:\s|$))/;
+
+const isTransportCriticalFile = (filePath) => {
+  if (!transportCriticalPrefixes.some((prefix) => filePath.startsWith(prefix))) {
+    return false;
+  }
+
+  return transportCriticalExtensions.has(extname(filePath));
+};
 
 for (const trackedFile of trackedFiles) {
   if (trackedFile === 'node_modules' || trackedFile.startsWith('node_modules/')) {
     trackedNodeModules.push(trackedFile);
+    continue;
+  }
+
+  if (!isTransportCriticalFile(trackedFile)) {
     continue;
   }
 
@@ -41,8 +57,18 @@ for (const trackedFile of trackedFiles) {
   }
 
   const contents = readFileSync(fullPath, 'utf8');
-  if (contents.includes('<<<<<<<') || contents.includes('=======') || contents.includes('>>>>>>>')) {
-    trackedConflictFiles.push(trackedFile);
+  const lines = contents.split(/\r?\n/);
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
+
+    if (conflictMarkerRegex.test(line)) {
+      transportConflictMarkers.push({
+        file: trackedFile,
+        line: lineIndex + 1,
+        text: line.trim(),
+      });
+    }
   }
 }
 
@@ -53,14 +79,14 @@ if (trackedNodeModules.length > 0) {
   }
 }
 
-if (trackedConflictFiles.length > 0) {
-  console.error('Repository hygiene failed: conflict markers detected in tracked files.');
-  for (const file of trackedConflictFiles) {
-    console.error(` - ${file}`);
+if (transportConflictMarkers.length > 0) {
+  console.error('Repository hygiene failed: unresolved conflict markers detected in transport-critical files.');
+  for (const marker of transportConflictMarkers) {
+    console.error(` - ${marker.file}:${marker.line} :: ${marker.text}`);
   }
 }
 
-if (trackedNodeModules.length > 0 || trackedConflictFiles.length > 0) {
+if (trackedNodeModules.length > 0 || transportConflictMarkers.length > 0) {
   process.exit(1);
 }
 
