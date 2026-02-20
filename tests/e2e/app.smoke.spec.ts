@@ -82,14 +82,88 @@ test("places an entity on click and stores it in runtime sim", async ({ page }) 
 
     await canvas.click({ position: { x: target.x, y: target.y } });
 
-    const entityCount = await page.evaluate(() => {
-      const sim = (window as unknown as { __SIM__?: { getAllEntities?: () => unknown[] } }).__SIM__;
+    const prePlacementState = await page.evaluate(() => {
+      const sim = (
+        window as unknown as {
+          __SIM__?: {
+            getPlacementSnapshot?: () => { tickCount: number; elapsedMs: number; tick: number; entityCount: number };
+            tickCount?: number;
+            getAllEntities?: () => unknown[];
+          };
+        }
+      ).__SIM__;
+      if (!sim) {
+        return { tickCount: 0, entityCount: 0 };
+      }
+
+      if (typeof sim.getPlacementSnapshot === "function") {
+        return sim.getPlacementSnapshot();
+      }
+
+      return {
+        tickCount: typeof sim.tickCount === "number" ? sim.tickCount : 0,
+        entityCount: typeof sim.getAllEntities === "function" ? sim.getAllEntities().length : 0,
+        tick: 0,
+        elapsedMs: 0,
+      };
+    });
+
+    await canvas.click({ position: { x: target.x, y: target.y } });
+
+    await page.waitForFunction(
+      (
+        baseline: { tickCount: number; entityCount: number } | null
+      ): boolean => {
+        const sim = (
+          window as unknown as {
+            __SIM__?: {
+              getPlacementSnapshot?: () => { tickCount: number; entityCount: number };
+              tickCount?: number;
+              getAllEntities?: () => unknown[];
+            };
+          }
+        ).__SIM__;
+
+        if (!sim || baseline === null) {
+          return false;
+        }
+
+        const state = typeof sim.getPlacementSnapshot === "function"
+          ? sim.getPlacementSnapshot()
+          : typeof sim.tickCount === "number" && typeof sim.getAllEntities === "function"
+            ? {
+                tickCount: sim.tickCount,
+                entityCount: sim.getAllEntities().length,
+              }
+            : null;
+
+        if (!state) {
+          return false;
+        }
+
+        return state.tickCount > baseline.tickCount && state.entityCount > baseline.entityCount;
+      },
+      { tickCount: prePlacementState.tickCount, entityCount: prePlacementState.entityCount },
+      {
+        timeout: 3000,
+      }
+    );
+
+    const finalCount = await page.evaluate(() => {
+      const sim = (
+        window as unknown as {
+          __SIM__?: {
+            getPlacementSnapshot?: () => { tickCount: number; entityCount: number };
+            getAllEntities?: () => unknown[];
+          };
+        }
+      ).__SIM__;
       if (!sim || typeof sim.getAllEntities !== "function") {
         return 0;
       }
       return sim.getAllEntities().length;
     });
 
-    expect(entityCount).toBeGreaterThan(0);
+    expect(finalCount).toBeGreaterThan(0);
   });
 });

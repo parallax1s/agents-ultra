@@ -57,6 +57,13 @@ type RuntimeEntity = {
   state?: Record<string, unknown>;
 };
 
+type PlacementSnapshot = {
+  tick: number;
+  tickCount: number;
+  elapsedMs: number;
+  entityCount: number;
+};
+
 type RuntimeSimulation = Simulation & {
   width: number;
   height: number;
@@ -66,6 +73,7 @@ type RuntimeSimulation = Simulation & {
   elapsedMs: number;
   getMap: () => ReturnType<typeof createMap>;
   getAllEntities: () => RuntimeEntity[];
+  getPlacementSnapshot: () => PlacementSnapshot;
   destroy: () => void;
 };
 
@@ -105,11 +113,20 @@ function createRuntimeSimulation(): RuntimeSimulation {
 
     getMap: () => map,
 
-    getAllEntities: () => Array.from(entities.values()),
+      getAllEntities: () => Array.from(entities.values()),
 
-    canPlace(kind, tile, _rotation) {
-      if (!inBounds(tile)) {
-        return false;
+      getPlacementSnapshot() {
+        return {
+          tick: runtime.tick,
+          tickCount: runtime.tickCount,
+          elapsedMs: runtime.elapsedMs,
+          entityCount: entities.size,
+        };
+      },
+
+      canPlace(kind, tile, _rotation) {
+        if (!inBounds(tile)) {
+          return false;
       }
 
       const tileKey = toKey(tile);
