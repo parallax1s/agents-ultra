@@ -38,6 +38,10 @@ npm run typecheck
 ```
 Use this mode for maintenance and local development. It keeps contributor loops moving by relying on skip behavior when optional test tooling is unavailable.
 
+## Manual validation notes
+- Fixed-step behavior: the simulation must run at deterministic 60 TPS using fixed-step progression, independent of render frame timing.
+- Pause/resume expectation: pressing `Space` must freeze simulation state while paused and resume from the same state without losing or re-running ticks.
+
 ## Optional E2E (Playwright)
 ```bash
 npm i -D @playwright/test
@@ -51,11 +55,11 @@ Notes:
 
 ### Split test modes
 
-- `npm test` (maintenance/local): run fast checks locally before/while editing.
+- `npm run test` (maintenance/local): run fast checks locally before/while editing.
 - `npm run test:strict` (CI/verification): run repository hygiene checks first, then strict unit and e2e tests.
 
 Expected behavior when dev dependencies are missing:
-- `npm test`: skips missing optional test suites and exits successfully.
+- `npm run test`: skips missing optional test suites and exits successfully.
 - `npm run test:strict`: runs `npm run verify:hygiene` first (which fails fast on typecheck/build issues), then executes strict tests. In strict mode it exits non-zero with install guidance when required test binaries are absent.
 
 ### Strict verification sequence
