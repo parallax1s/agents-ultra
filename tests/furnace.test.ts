@@ -16,7 +16,7 @@ const runTicks = (furnace: Furnace, ticks: number): void => {
 };
 
 describe('Furnace', () => {
-  it('produces iron-plate on the exact 180th crafting tick boundary', () => {
+  it('produces iron-plate on exact smelt completion boundaries', () => {
     const furnace = new Furnace();
     let tick = 0;
 
@@ -41,9 +41,13 @@ describe('Furnace', () => {
     advanceTo(boundaryTick);
     expect(tick).toBe(boundaryTick);
     expect(furnace.canProvideItem('iron-plate')).toBe(true);
+
+    advanceTo(boundaryTick + 1);
+    expect(tick).toBe(boundaryTick + 1);
+    expect(furnace.canProvideItem('iron-plate')).toBe(true);
   });
 
-  it('holds blocked output deterministically, then resumes only after extraction at boundary', () => {
+  it('holds blocked output deterministically, then resumes only after extraction at the next boundary', () => {
     const furnace = new Furnace();
     let tick = 0;
 
@@ -59,22 +63,25 @@ describe('Furnace', () => {
     tick += 1;
 
     const firstCompletion = FURNACE_SMELT_TICKS + 1;
-    const secondCompletion = firstCompletion + FURNACE_SMELT_TICKS;
+    const lastBlockedProgress = firstCompletion + FURNACE_SMELT_TICKS - 1;
 
     advanceTo(firstCompletion);
     expect(tick).toBe(firstCompletion);
     expect(furnace.canProvideItem('iron-plate')).toBe(true);
 
-    advanceTo(secondCompletion);
-    expect(tick).toBe(secondCompletion);
-    expect(furnace.canProvideItem('iron-plate')).toBe(true);
-    expect(furnace.canAcceptItem('iron-ore')).toBe(false);
-
-    advanceTo(secondCompletion + 1);
-    expect(tick).toBe(secondCompletion + 1);
+    advanceTo(lastBlockedProgress);
+    expect(tick).toBe(lastBlockedProgress);
     expect(furnace.canProvideItem('iron-plate')).toBe(true);
     expect(furnace.canAcceptItem('iron-ore')).toBe(false);
     expect(furnace.acceptItem('iron-ore')).toBe(false);
+
+    advanceTo(firstCompletion + FURNACE_SMELT_TICKS);
+    expect(tick).toBe(firstCompletion + FURNACE_SMELT_TICKS);
+    expect(furnace.canProvideItem('iron-plate')).toBe(true);
+    expect(furnace.canAcceptItem('iron-ore')).toBe(false);
+    expect(furnace.acceptItem('iron-ore')).toBe(false);
+
+    expect(furnace.canAcceptItem('iron-ore')).toBe(false);
 
     expect(furnace.provideItem('iron-plate')).toBe('iron-plate');
     expect(furnace.provideItem('iron-plate')).toBeNull();
@@ -84,13 +91,15 @@ describe('Furnace', () => {
     startCraft(furnace);
     tick += 1;
 
-    const unblockBoundary = tick + FURNACE_SMELT_TICKS;
-    advanceTo(unblockBoundary - 1);
-    expect(tick).toBe(unblockBoundary - 1);
+    const secondPreBoundary = tick + FURNACE_SMELT_TICKS - 1;
+    const secondBoundary = tick + FURNACE_SMELT_TICKS;
+    advanceTo(secondPreBoundary);
+    expect(tick).toBe(secondPreBoundary);
     expect(furnace.canProvideItem('iron-plate')).toBe(false);
+    expect(furnace.canAcceptItem('iron-ore')).toBe(false);
 
-    advanceTo(unblockBoundary);
-    expect(tick).toBe(unblockBoundary);
+    advanceTo(secondBoundary);
+    expect(tick).toBe(secondBoundary);
     expect(furnace.canProvideItem('iron-plate')).toBe(true);
   });
 
