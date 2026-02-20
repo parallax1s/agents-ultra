@@ -2,43 +2,63 @@ import { describe, expect, it } from 'vitest';
 
 import { Furnace } from '../src/entities/furnace';
 
+const FURNACE_SMELT_TICKS = 180;
+
+const startCraft = (furnace: Furnace): void => {
+  expect(furnace.acceptItem('iron-ore')).toBe(true);
+  furnace.update(0);
+};
+
+const runTicks = (furnace: Furnace, ticks: number): void => {
+  for (let i = 0; i < ticks; i += 1) {
+    furnace.update(0);
+  }
+};
+
 describe('Furnace', () => {
-  it('produces iron-plate after 1s when given one iron-ore', () => {
+  it('produces iron-plate on the exact 180th crafting tick boundary', () => {
     const furnace = new Furnace();
 
     expect(furnace.canAcceptItem('iron-ore')).toBe(true);
-    furnace.acceptItem('iron-ore');
+    startCraft(furnace);
 
-    furnace.update(0);
-    furnace.update(999);
+    runTicks(furnace, FURNACE_SMELT_TICKS - 1);
     expect(furnace.canProvideItem('iron-plate')).toBe(false);
 
-    furnace.update(1000);
+    runTicks(furnace, 1);
     expect(furnace.canProvideItem('iron-plate')).toBe(true);
   });
 
-  it('output blocks crafting when occupied', () => {
+  it('keeps output-blocked state deterministic until plate is extracted, then resumes on next full cycle', () => {
     const furnace = new Furnace();
 
-    furnace.output = 'iron-plate';
+    startCraft(furnace);
+    runTicks(furnace, FURNACE_SMELT_TICKS);
+    expect(furnace.canProvideItem('iron-plate')).toBe(true);
+
+    runTicks(furnace, FURNACE_SMELT_TICKS * 2);
+    expect(furnace.canProvideItem('iron-plate')).toBe(true);
     expect(furnace.canAcceptItem('iron-ore')).toBe(false);
+    expect(furnace.acceptItem('iron-ore')).toBe(false);
 
     expect(furnace.provideItem('iron-plate')).toBe('iron-plate');
+    expect(furnace.provideItem('iron-plate')).toBeNull();
     expect(furnace.canAcceptItem('iron-ore')).toBe(true);
 
-    furnace.acceptItem('iron-ore');
-    furnace.update(0);
-    furnace.update(1000);
+    startCraft(furnace);
+    runTicks(furnace, FURNACE_SMELT_TICKS - 1);
+    expect(furnace.canProvideItem('iron-plate')).toBe(false);
 
+    runTicks(furnace, 1);
     expect(furnace.canProvideItem('iron-plate')).toBe(true);
   });
 
-  it('does not craft without input', () => {
+  it('does not craft when no input is present', () => {
     const furnace = new Furnace();
 
-    furnace.update(0);
-    furnace.update(2000);
+    runTicks(furnace, FURNACE_SMELT_TICKS * 3);
 
     expect(furnace.canProvideItem('iron-plate')).toBe(false);
+    expect(furnace.provideItem('iron-plate')).toBeNull();
   });
 });

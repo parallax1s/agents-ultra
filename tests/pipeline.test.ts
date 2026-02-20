@@ -1,17 +1,23 @@
 import { describe, expect, it } from 'vitest';
 
-// Core, headless-only imports
 import { createSim } from '../src/core/sim';
-import { createMap } from '../src/core/map';
-import { registerEntity, getDefinition } from '../src/core/registry';
-// Side-effect registration (may be a no-op in this slice, but required by task)
-import '../src/entities/all';
-import type { Direction, ItemKind } from '../src/core/types';
+import { getDefinition, registerEntity } from '../src/core/registry';
+import type { Direction, EntityBase, ItemKind } from '../src/core/types';
 
-// Fixed-step tick size must match the sim (60 TPS)
 const TICK_MS = 1000 / 60;
 
+const MINER_ATTEMPT_TICKS = 60;
+const BELT_ATTEMPT_TICKS = 15;
+const INSERTER_ATTEMPT_TICKS = 20;
+const FURNACE_SMELT_TICKS = 180;
+
+const TEST_MINER_KIND = 'pipeline-test-miner-c60';
+const TEST_BELT_KIND = 'pipeline-test-belt-c15';
+const TEST_INSERTER_KIND = 'pipeline-test-inserter-c20';
+const TEST_FURNACE_KIND = 'pipeline-test-furnace-c180';
+
 type Vec = { x: number; y: number };
+
 const DIR_V: Record<Direction, Vec> = {
   N: { x: 0, y: -1 },
   E: { x: 1, y: 0 },
@@ -19,227 +25,390 @@ const DIR_V: Record<Direction, Vec> = {
   W: { x: -1, y: 0 },
 };
 
-const add = (a: Vec, b: Vec): Vec => ({ x: a.x + b.x, y: a.y + b.y });
-
-// Simple helpers for the test-local entity behaviors
-const asState = <T extends object>(value: unknown): T | undefined => {
-  return value && typeof value === 'object' ? (value as T) : undefined;
+const OPPOSITE: Record<Direction, Direction> = {
+  N: 'S',
+  E: 'W',
+  S: 'N',
+  W: 'E',
 };
 
-function ensureTestEntities(map: ReturnType<typeof createMap>) {
-  // Minimal, deterministic miner: emits one iron-ore every 1000ms if placed on ore,
-  // attempting to push forward into the tile it faces when the receiver can accept.
-  if (!getDefinition('miner')) {
-    registerEntity('miner', {
-      create: () => ({ cooldownMs: 0, buffer: null as ItemKind | null }),
-      update: (entity, dtMs, sim) => {
-        const st = asState<{ cooldownMs: number; buffer: ItemKind | null }>(entity.state);
-        if (!st) return;
+const add = (a: Vec, b: Vec): Vec => ({ x: a.x + b.x, y: a.y + b.y });
 
-        // Only mine if the tile is ore
-        if (!map.isOre(entity.pos.x, entity.pos.y)) {
+type MinerState = {
+  ticks: number;
+  holding: ItemKind | null;
+  attempts: number;
+  moved: number;
+  blocked: number;
+};
+
+type BeltState = {
+  ticks: number;
+  item: ItemKind | null;
+  attempts: number;
+  moved: number;
+  blocked: number;
+};
+
+type InserterState = {
+  ticks: number;
+  holding: ItemKind | null;
+  attempts: number;
+  pickups: number;
+  drops: number;
+  blockedPickups: number;
+  blockedDrops: number;
+};
+
+type FurnaceState = {
+  input: ItemKind | null;
+  output: ItemKind | null;
+  crafting: boolean;
+  progressTicks: number;
+  completed: number;
+};
+
+type SimWithGridLookup = {
+  getEntitiesAt(pos: Vec): EntityBase[];
+};
+
+const asState = <T extends object>(value: unknown): T | undefined => {
+  if (typeof value !== 'object' || value === null) {
+    return undefined;
+  }
+
+  return value as T;
+};
+
+const getEntitiesAt = (sim: unknown, pos: Vec): EntityBase[] => {
+  if (typeof sim !== 'object' || sim === null || !("getEntitiesAt" in sim)) {
+    return [];
+  }
+
+  const candidate = sim as SimWithGridLookup;
+  return typeof candidate.getEntitiesAt === 'function' ? candidate.getEntitiesAt(pos) : [];
+};
+
+const firstKindAt = (sim: unknown, pos: Vec, kind: string): EntityBase | undefined => {
+  const entities = getEntitiesAt(sim, pos);
+  return entities.find((entity) => entity.kind === kind);
+};
+
+const stepTicks = (sim: ReturnType<typeof createSim>, ticks: number): void => {
+  for (let i = 0; i < ticks; i += 1) {
+    sim.step(TICK_MS);
+  }
+};
+
+const getState = <T extends object>(sim: ReturnType<typeof createSim>, id: string): T => {
+  const entity = sim.getEntityById(id);
+  expect(entity).toBeDefined();
+
+  const state = asState<T>(entity?.state);
+  expect(state).toBeDefined();
+
+  return state as T;
+};
+
+const ensureTransportCadenceDefinitions = (): void => {
+  if (getDefinition(TEST_MINER_KIND) === undefined) {
+    registerEntity(TEST_MINER_KIND, {
+      create: () => ({
+        ticks: 0,
+        holding: 'iron-ore' as ItemKind,
+        attempts: 0,
+        moved: 0,
+        blocked: 0,
+      }),
+      update: (entity, _dtMs, sim) => {
+        const state = asState<MinerState>(entity.state);
+        if (!state) {
           return;
         }
 
-        // Produce one ore per second when buffer is empty
-        st.cooldownMs += dtMs;
-        if (st.buffer === null && st.cooldownMs >= 1000) {
-          st.buffer = 'iron-ore';
-          st.cooldownMs -= 1000;
+        state.ticks += 1;
+        if (state.ticks % MINER_ATTEMPT_TICKS !== 0) {
+          return;
         }
 
-        if (st.buffer !== null) {
-          const fwd = add(entity.pos, DIR_V[entity.rot]);
-          const receivers = (sim as any).getEntitiesAt?.(fwd) ?? [];
-          for (const r of receivers) {
-            if (r.kind === 'belt') {
-              const bs = asState<{ buffer: ItemKind | null }>(r.state);
-              if (bs && bs.buffer === null) {
-                bs.buffer = st.buffer;
-                st.buffer = null;
-                break;
-              }
-            }
-          }
+        state.attempts += 1;
+        if (state.holding === null) {
+          state.holding = 'iron-ore';
         }
-      },
-    });
-  }
 
-  // Minimal belt: holds a single buffered item and tries to move it forward each tick
-  // into another belt or an inserter (pickup side).
-  if (!getDefinition('belt')) {
-    registerEntity('belt', {
-      create: () => ({ buffer: null as ItemKind | null }),
-      update: (entity, _dtMs, sim) => {
-        const st = asState<{ buffer: ItemKind | null }>(entity.state);
-        if (!st || st.buffer === null) return;
-
-        const fwd = add(entity.pos, DIR_V[entity.rot]);
-        const receivers = (sim as any).getEntitiesAt?.(fwd) ?? [];
-        for (const r of receivers) {
-          if (r.kind === 'belt') {
-            const bs = asState<{ buffer: ItemKind | null }>(r.state);
-            if (bs && bs.buffer === null) {
-              bs.buffer = st.buffer;
-              st.buffer = null;
-              break;
-            }
-          } else if (r.kind === 'inserter') {
-            const is = asState<{ state: number; holding: ItemKind | null }>(r.state);
-            if (is && is.holding === null) {
-              is.holding = st.buffer;
-              st.buffer = null;
-              break;
-            }
-          }
-        }
-      },
-    });
-  }
-
-  // Minimal inserter: if holding an item and facing a furnace, drops it into the
-  // furnace input; otherwise, tries to pick from the tile behind it.
-  if (!getDefinition('inserter')) {
-    registerEntity('inserter', {
-      create: () => ({ state: 0, holding: null as ItemKind | null }),
-      update: (entity, _dtMs, sim) => {
-        const st = asState<{ state: number; holding: ItemKind | null }>(entity.state);
-        if (!st) return;
-
-        const behind = add(entity.pos, DIR_V[{ N: 'S', E: 'W', S: 'N', W: 'E' }[entity.rot] as Direction]);
         const ahead = add(entity.pos, DIR_V[entity.rot]);
+        const belt = firstKindAt(sim, ahead, TEST_BELT_KIND);
+        const beltState = asState<BeltState>(belt?.state);
 
-        // If holding, try to drop ahead into furnace
-        if (st.holding) {
-          const targets = (sim as any).getEntitiesAt?.(ahead) ?? [];
-          for (const t of targets) {
-            if (t.kind === 'furnace') {
-              const fs = asState<{ input: ItemKind | null; progressMs: number; outputCount: number }>(t.state);
-              if (fs && fs.input === null) {
-                fs.input = st.holding;
-                st.holding = null;
-                st.state = (st.state + 1) % 4; // advance a phase for visibility if snapshotted
-                break;
-              }
-            }
+        if (!beltState || beltState.item !== null) {
+          state.blocked += 1;
+          return;
+        }
+
+        beltState.item = state.holding;
+        state.holding = null;
+        state.moved += 1;
+      },
+    });
+  }
+
+  if (getDefinition(TEST_BELT_KIND) === undefined) {
+    registerEntity(TEST_BELT_KIND, {
+      create: () => ({
+        ticks: 0,
+        item: null as ItemKind | null,
+        attempts: 0,
+        moved: 0,
+        blocked: 0,
+      }),
+      update: (entity, _dtMs, sim) => {
+        const state = asState<BeltState>(entity.state);
+        if (!state) {
+          return;
+        }
+
+        state.ticks += 1;
+        if (state.ticks % BELT_ATTEMPT_TICKS !== 0 || state.item === null) {
+          return;
+        }
+
+        state.attempts += 1;
+
+        const ahead = add(entity.pos, DIR_V[entity.rot]);
+        const targetBelt = firstKindAt(sim, ahead, TEST_BELT_KIND);
+        const targetState = asState<BeltState>(targetBelt?.state);
+        if (!targetState || targetState.item !== null) {
+          state.blocked += 1;
+          return;
+        }
+
+        targetState.item = state.item;
+        state.item = null;
+        state.moved += 1;
+      },
+    });
+  }
+
+  if (getDefinition(TEST_INSERTER_KIND) === undefined) {
+    registerEntity(TEST_INSERTER_KIND, {
+      create: () => ({
+        ticks: 0,
+        holding: null as ItemKind | null,
+        attempts: 0,
+        pickups: 0,
+        drops: 0,
+        blockedPickups: 0,
+        blockedDrops: 0,
+      }),
+      update: (entity, _dtMs, sim) => {
+        const state = asState<InserterState>(entity.state);
+        if (!state) {
+          return;
+        }
+
+        state.ticks += 1;
+        if (state.ticks % INSERTER_ATTEMPT_TICKS !== 0) {
+          return;
+        }
+
+        state.attempts += 1;
+
+        if (state.holding === null) {
+          const behind = add(entity.pos, DIR_V[OPPOSITE[entity.rot]]);
+          const sourceBelt = firstKindAt(sim, behind, TEST_BELT_KIND);
+          const sourceState = asState<BeltState>(sourceBelt?.state);
+          if (!sourceState || sourceState.item === null) {
+            state.blockedPickups += 1;
+            return;
+          }
+
+          state.holding = sourceState.item;
+          sourceState.item = null;
+          state.pickups += 1;
+          return;
+        }
+
+        const ahead = add(entity.pos, DIR_V[entity.rot]);
+        const furnace = firstKindAt(sim, ahead, TEST_FURNACE_KIND);
+        const furnaceState = asState<FurnaceState>(furnace?.state);
+
+        if (!furnaceState || furnaceState.input !== null || furnaceState.crafting || furnaceState.output !== null) {
+          state.blockedDrops += 1;
+          return;
+        }
+
+        furnaceState.input = state.holding;
+        state.holding = null;
+        state.drops += 1;
+      },
+    });
+  }
+
+  if (getDefinition(TEST_FURNACE_KIND) === undefined) {
+    registerEntity(TEST_FURNACE_KIND, {
+      create: () => ({
+        input: null as ItemKind | null,
+        output: null as ItemKind | null,
+        crafting: false,
+        progressTicks: 0,
+        completed: 0,
+      }),
+      update: (entity) => {
+        const state = asState<FurnaceState>(entity.state);
+        if (!state) {
+          return;
+        }
+
+        if (!state.crafting) {
+          if (state.input === 'iron-ore' && state.output === null) {
+            state.crafting = true;
+            state.input = null;
+            state.progressTicks = 0;
           }
           return;
         }
 
-        // Not holding: try to pick up from belt behind
-        const sources = (sim as any).getEntitiesAt?.(behind) ?? [];
-        for (const s of sources) {
-          if (s.kind === 'belt') {
-            const bs = asState<{ buffer: ItemKind | null }>(s.state);
-            if (bs && bs.buffer) {
-              st.holding = bs.buffer;
-              bs.buffer = null;
-              break;
-            }
-          }
+        if (state.progressTicks < FURNACE_SMELT_TICKS) {
+          state.progressTicks += 1;
+        }
+
+        if (state.progressTicks === FURNACE_SMELT_TICKS && state.output === null) {
+          state.output = 'iron-plate';
+          state.crafting = false;
+          state.progressTicks = 0;
+          state.completed += 1;
         }
       },
     });
   }
+};
 
-  // Minimal furnace: accepts one iron-ore at a time, crafts for 3000ms, then
-  // increments outputCount by 1 plate. No fuel mechanics here.
-  if (!getDefinition('furnace')) {
-    registerEntity('furnace', {
-      create: () => ({ input: null as ItemKind | null, progressMs: 0, outputCount: 0 }),
-      update: (entity, dtMs) => {
-        const st = asState<{ input: ItemKind | null; progressMs: number; outputCount: number }>(entity.state);
-        if (!st) return;
+describe('Transport cadence regressions', () => {
+  it('enforces Miner 60-tick gating with deterministic blocked and unblocked retries', () => {
+    ensureTransportCadenceDefinitions();
 
-        if (st.input === 'iron-ore') {
-          st.progressMs += dtMs;
-          if (st.progressMs >= 3000) {
-            st.outputCount += 1; // one iron-plate produced
-            st.input = null;
-            st.progressMs = 0;
-          }
-        }
-      },
-    });
-  }
-}
+    const sim = createSim({ width: 8, height: 3, seed: 101 });
 
-function findOreNearCenter(width: number, height: number, seed: number | string, maxRadius = 20) {
-  const map = createMap(width, height, seed);
-  const cx = Math.floor(width / 2);
-  const cy = Math.floor(height / 2);
+    const blockingBeltId = sim.addEntity({ kind: TEST_BELT_KIND, pos: { x: 2, y: 1 }, rot: 'E' });
+    const minerId = sim.addEntity({ kind: TEST_MINER_KIND, pos: { x: 1, y: 1 }, rot: 'E' });
 
-  for (let r = 1; r <= maxRadius; r += 1) {
-    for (let dy = -r; dy <= r; dy += 1) {
-      for (let dx = -r; dx <= r; dx += 1) {
-        const x = cx + dx;
-        const y = cy + dy;
-        if (x < 0 || y < 0 || x >= width || y >= height) continue;
-        if (map.isOre(x, y)) {
-          return { map, pos: { x, y } } as const;
-        }
-      }
-    }
-  }
+    const blockingBelt = getState<BeltState>(sim, blockingBeltId);
+    blockingBelt.item = 'iron-ore';
 
-  throw new Error('No ore found within radius');
-}
+    stepTicks(sim, 59);
+    expect(getState<MinerState>(sim, minerId)).toMatchObject({ attempts: 0, blocked: 0, moved: 0 });
 
-describe('Headless pipeline smoke test (ore → plate)', () => {
-  it('produces at least one iron-plate after ≥3s with no duplication', () => {
-    const width = 40;
-    const height = 28;
-    const seed = 7331; // deterministic
+    stepTicks(sim, 1);
+    expect(getState<MinerState>(sim, minerId)).toMatchObject({ attempts: 1, blocked: 1, moved: 0 });
+    expect(getState<BeltState>(sim, blockingBeltId).item).toBe('iron-ore');
 
-    const { map, pos: orePos } = findOreNearCenter(width, height, seed, 20);
-    ensureTestEntities(map);
+    getState<BeltState>(sim, blockingBeltId).item = null;
 
-    const sim = createSim({ width, height, seed });
+    stepTicks(sim, 59);
+    expect(getState<MinerState>(sim, minerId)).toMatchObject({ attempts: 1, blocked: 1, moved: 0 });
 
-    // Choose a direction that points to a non-ore tile for the miner output
-    const tryDirs: Direction[] = ['E', 'S', 'W', 'N'];
-    let placed = false;
-    let minerRot: Direction = 'E';
-    let beltPos: Vec = orePos;
-    for (const d of tryDirs) {
-      const ahead = add(orePos, DIR_V[d]);
-      if (ahead.x < 0 || ahead.y < 0 || ahead.x >= width || ahead.y >= height) continue;
-      if (map.isOre(ahead.x, ahead.y)) continue;
-      minerRot = d;
-      beltPos = ahead;
-      placed = true;
-      break;
-    }
-    if (!placed) throw new Error('Failed to find a valid output direction off ore');
+    stepTicks(sim, 1);
+    expect(getState<MinerState>(sim, minerId)).toMatchObject({ attempts: 2, blocked: 1, moved: 1 });
+    expect(getState<BeltState>(sim, blockingBeltId).item).toBe('iron-ore');
+  });
 
-    // Layout: [ORE][MINER]->[BELT]->[INSERTER]->[FURNACE]
-    sim.addEntity({ kind: 'miner', pos: orePos, rot: minerRot } as any);
-    sim.addEntity({ kind: 'belt', pos: beltPos, rot: minerRot } as any);
+  it('enforces Belt 15-tick forward attempts with one-item capacity semantics', () => {
+    ensureTransportCadenceDefinitions();
 
-    const inserterPos = add(beltPos, DIR_V[minerRot]);
-    const furnacePos = add(inserterPos, DIR_V[minerRot]);
-    sim.addEntity({ kind: 'inserter', pos: inserterPos, rot: minerRot } as any);
-    const furnaceId = sim.addEntity({ kind: 'furnace', pos: furnacePos, rot: minerRot } as any);
+    const sim = createSim({ width: 8, height: 3, seed: 102 });
 
-    // Advance fixed-step time for ≥3000ms (converted to ticks). Give a little extra
-    // budget for transfers along belt/inserter.
-    // Minimum time: ~1000ms to mine + 3000ms to smelt => 4000ms.
-    // Give extra headroom for update ordering.
-    const totalMs = 4200; // 4.2s
-    const ticks = Math.ceil(totalMs / TICK_MS);
-    for (let i = 0; i < ticks; i += 1) {
-      (sim as any).step(TICK_MS);
-    }
+    const targetBeltId = sim.addEntity({ kind: TEST_BELT_KIND, pos: { x: 2, y: 1 }, rot: 'E' });
+    const sourceBeltId = sim.addEntity({ kind: TEST_BELT_KIND, pos: { x: 1, y: 1 }, rot: 'E' });
 
-    // Inspect furnace state: it should have produced at least one plate and never duplicate
-    const furnace = (sim as any).getEntityById(furnaceId);
-    const fs = asState<{ input: ItemKind | null; progressMs: number; outputCount: number }>(furnace?.state);
-    expect(fs).toBeDefined();
-    expect(fs?.outputCount ?? 0).toBeGreaterThanOrEqual(1);
+    getState<BeltState>(sim, targetBeltId).item = 'iron-ore';
+    getState<BeltState>(sim, sourceBeltId).item = 'iron-ore';
 
-    // No duplication: output count can be at most one for this time budget because
-    // the furnace smelts for 3000ms per plate and we only allowed one ore cycle to arrive.
-    expect(fs?.outputCount ?? 0).toBeLessThanOrEqual(1);
+    stepTicks(sim, 14);
+    expect(getState<BeltState>(sim, sourceBeltId)).toMatchObject({ attempts: 0, blocked: 0, moved: 0, item: 'iron-ore' });
+
+    stepTicks(sim, 1);
+    expect(getState<BeltState>(sim, sourceBeltId)).toMatchObject({ attempts: 1, blocked: 1, moved: 0, item: 'iron-ore' });
+
+    getState<BeltState>(sim, targetBeltId).item = null;
+
+    stepTicks(sim, 14);
+    expect(getState<BeltState>(sim, sourceBeltId).item).toBe('iron-ore');
+
+    stepTicks(sim, 1);
+    expect(getState<BeltState>(sim, sourceBeltId)).toMatchObject({ attempts: 2, blocked: 1, moved: 1, item: null });
+    expect(getState<BeltState>(sim, targetBeltId).item).toBe('iron-ore');
+  });
+
+  it('enforces Inserter 20-tick sided transfers and Furnace 180-tick/output-backpressure boundaries', () => {
+    ensureTransportCadenceDefinitions();
+
+    const sim = createSim({ width: 10, height: 3, seed: 103 });
+
+    const furnaceId = sim.addEntity({ kind: TEST_FURNACE_KIND, pos: { x: 5, y: 1 }, rot: 'E' });
+    const inserterId = sim.addEntity({ kind: TEST_INSERTER_KIND, pos: { x: 4, y: 1 }, rot: 'E' });
+    const feedBeltId = sim.addEntity({ kind: TEST_BELT_KIND, pos: { x: 3, y: 1 }, rot: 'E' });
+
+    getState<BeltState>(sim, feedBeltId).item = 'iron-ore';
+
+    let tick = 0;
+    const advance = (ticks: number): void => {
+      stepTicks(sim, ticks);
+      tick += ticks;
+    };
+
+    advance(19);
+    expect(tick).toBe(19);
+    expect(getState<InserterState>(sim, inserterId).holding).toBeNull();
+    expect(getState<BeltState>(sim, feedBeltId).item).toBe('iron-ore');
+
+    advance(1);
+    expect(tick).toBe(20);
+    expect(getState<InserterState>(sim, inserterId)).toMatchObject({ attempts: 1, pickups: 1, holding: 'iron-ore' });
+    expect(getState<BeltState>(sim, feedBeltId).item).toBeNull();
+
+    getState<BeltState>(sim, feedBeltId).item = 'iron-ore';
+
+    advance(19);
+    expect(tick).toBe(39);
+    expect(getState<InserterState>(sim, inserterId).holding).toBe('iron-ore');
+    expect(getState<FurnaceState>(sim, furnaceId)).toMatchObject({ input: null, crafting: false, output: null, completed: 0 });
+
+    advance(1);
+    expect(tick).toBe(40);
+    expect(getState<InserterState>(sim, inserterId)).toMatchObject({ drops: 1, holding: null });
+    expect(getState<FurnaceState>(sim, furnaceId)).toMatchObject({ input: 'iron-ore', crafting: false, output: null, completed: 0 });
+
+    advance(1);
+    expect(tick).toBe(41);
+    expect(getState<FurnaceState>(sim, furnaceId)).toMatchObject({ input: null, crafting: true, progressTicks: 0, output: null, completed: 0 });
+
+    advance(19);
+    expect(tick).toBe(60);
+    expect(getState<InserterState>(sim, inserterId)).toMatchObject({ pickups: 2, holding: 'iron-ore' });
+
+    advance(160);
+    expect(tick).toBe(220);
+    expect(getState<FurnaceState>(sim, furnaceId)).toMatchObject({ crafting: true, progressTicks: 179, output: null, completed: 0 });
+
+    advance(1);
+    expect(tick).toBe(221);
+    expect(getState<FurnaceState>(sim, furnaceId)).toMatchObject({ crafting: false, progressTicks: 0, output: 'iron-plate', completed: 1 });
+
+    advance(39);
+    expect(tick).toBe(260);
+    expect(getState<InserterState>(sim, inserterId).holding).toBe('iron-ore');
+    expect(getState<FurnaceState>(sim, furnaceId).output).toBe('iron-plate');
+
+    getState<FurnaceState>(sim, furnaceId).output = null;
+
+    advance(19);
+    expect(tick).toBe(279);
+    expect(getState<InserterState>(sim, inserterId).holding).toBe('iron-ore');
+    expect(getState<FurnaceState>(sim, furnaceId).input).toBeNull();
+
+    advance(1);
+    expect(tick).toBe(280);
+    expect(getState<InserterState>(sim, inserterId)).toMatchObject({ drops: 2, holding: null });
+    expect(getState<FurnaceState>(sim, furnaceId)).toMatchObject({ input: 'iron-ore', output: null, completed: 1 });
   });
 });
