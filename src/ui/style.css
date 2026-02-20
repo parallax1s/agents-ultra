@@ -1,5 +1,10 @@
 :root {
   color-scheme: light;
+  --hud-surface: rgba(10, 14, 28, 0.82);
+  --hud-border: rgba(214, 222, 235, 0.35);
+  --hud-label: rgba(225, 232, 243, 0.86);
+  --hud-value: #f4f8ff;
+  --hud-accent: #86f6a6;
 }
 
 html,
@@ -38,4 +43,155 @@ body {
 #pixi-container canvas:hover,
 .pixi-container canvas:hover {
   cursor: crosshair;
+}
+
+.palette,
+.hud,
+.app-hud,
+[data-testid="hud"],
+[data-test="hud"] {
+  color: var(--hud-value);
+  border: 1px solid var(--hud-border);
+  border-radius: 10px;
+  background: var(--hud-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.38);
+  font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+}
+
+.palette {
+  min-width: 196px;
+  padding: 10px;
+}
+
+.palette-buttons,
+[data-testid="palette-buttons"],
+[data-test="palette-buttons"] {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.palette button,
+[data-testid^="palette-button-"],
+[data-test^="palette-button-"] {
+  appearance: none;
+  border: 1px solid rgba(154, 173, 200, 0.72);
+  border-radius: 6px;
+  background: rgba(29, 40, 58, 0.82);
+  color: inherit;
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  padding: 8px 6px;
+  transition: background-color 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+
+.palette button:hover,
+[data-testid^="palette-button-"]:hover,
+[data-test^="palette-button-"]:hover {
+  border-color: rgba(190, 208, 232, 0.95);
+  background: rgba(41, 57, 79, 0.94);
+}
+
+.palette button[data-active='true'],
+[data-testid^="palette-button-"][data-active='true'],
+[data-test^="palette-button-"][data-active='true'] {
+  border-color: var(--hud-accent);
+  background: rgba(40, 96, 63, 0.95);
+  color: #edfff2;
+}
+
+.palette button:active,
+[data-testid^="palette-button-"]:active,
+[data-test^="palette-button-"]:active {
+  transform: translateY(1px);
+}
+
+.hud,
+.app-hud,
+[data-testid="hud"],
+[data-test="hud"],
+.palette-readout,
+[data-testid="palette-readout"],
+[data-test="palette-readout"],
+[data-testid="hud-fields"],
+[data-test="hud-fields"] {
+  min-width: 180px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.palette-readout,
+[data-testid="palette-readout"],
+[data-test="palette-readout"] {
+  margin: 10px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid rgba(214, 222, 235, 0.28);
+}
+
+.palette-readout-row,
+.hud-field,
+.hud__field,
+[data-testid^="palette-readout-row-"],
+[data-test^="palette-readout-row-"],
+[data-testid^="hud-field-"],
+[data-test^="hud-field-"] {
+  display: grid;
+  grid-template-columns: auto minmax(64px, auto);
+  align-items: baseline;
+  gap: 12px;
+  opacity: 1;
+  visibility: visible;
+}
+
+.palette-readout-row + .palette-readout-row,
+.hud-field + .hud-field,
+.hud__field + .hud__field,
+[data-testid^="palette-readout-row-"] + [data-testid^="palette-readout-row-"],
+[data-test^="palette-readout-row-"] + [data-test^="palette-readout-row-"],
+[data-testid^="hud-field-"] + [data-testid^="hud-field-"],
+[data-test^="hud-field-"] + [data-test^="hud-field-"] {
+  margin-top: 4px;
+}
+
+.palette-readout-row dt,
+.palette-readout-row .label,
+.hud-field-label,
+.hud__field-label,
+[data-testid^="hud-field-"][data-testid$="-label"],
+[data-test^="hud-field-"][data-test$="-label"],
+[data-testid="hud-fields"] [data-testid$="-label"],
+[data-test="hud-fields"] [data-test$="-label"] {
+  margin: 0;
+  color: var(--hud-label);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.palette-readout-row dd,
+.palette-readout-row .value,
+.hud-field-value,
+.hud__field-value,
+[data-testid^="hud-field-"][data-testid$="-value"],
+[data-test^="hud-field-"][data-test$="-value"],
+[data-testid="hud-fields"] [data-testid$="-value"],
+[data-test="hud-fields"] [data-test$="-value"] {
+  margin: 0;
+  text-align: right;
+  color: var(--hud-value);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-field--normalized,
+.hud__field--normalized,
+[data-testid^="hud-field-"][data-testid*="normalized"],
+[data-test^="hud-field-"][data-test*="normalized"],
+[data-testid="hud-fields"] [data-testid*="normalized"],
+[data-test="hud-fields"] [data-test*="normalized"] {
+  color: var(--hud-accent);
 }
