@@ -187,6 +187,8 @@ export function createMap(width: number, height: number, seed: number | string):
 
   const oreMask = new Uint8Array(width * height);
   const occupants = new Map<string, MapOccupantKind>();
+  const lastIngressTickByTile = new Map<string, number>();
+  let currentTransferTick = 0;
   const random = createPrng(seed);
   const keyForTile = (x: number, y: number): string => `${x},${y}`;
   const tileCopy = (tile: GridCoord): GridCoord => ({ x: tile.x, y: tile.y });
@@ -397,6 +399,7 @@ export function createMap(width: number, height: number, seed: number | string):
     const candidates: TransferCandidate[] = [];
     const usedSources = new Set<string>();
     const requestsByDestination = new Map<string, TransferCandidate[]>();
+    const provisionalWinners = new Map<number, TransferCandidate>();
 
     for (let index = 0; index < transfers.length; index += 1) {
       const transfer = transfers[index];
@@ -440,6 +443,8 @@ export function createMap(width: number, height: number, seed: number | string):
       bucket.push(candidate);
     }
 
+    const isSameTickIngressFor = (key: string, tick: number): boolean => lastIngressTickByTile.get(key) === tick;
+
     for (const [destinationKey, contenders] of requestsByDestination) {
       contenders.sort(compareTransferSource);
 
@@ -471,6 +476,7 @@ export function createMap(width: number, height: number, seed: number | string):
       }
 
       usedSources.add(winner.fromKey);
+      provisionalWinners.set(winner.index, winner);
 
       for (const contender of contenders) {
         if (outcomes[contender.index] !== undefined) {
@@ -489,8 +495,53 @@ export function createMap(width: number, height: number, seed: number | string):
       }
     }
 
+    const activeWinnerIndexes = new Set<number>(provisionalWinners.keys());
+
+    while (true) {
+      const destinationsThisTick = new Set<string>();
+      for (const winnerIndex of activeWinnerIndexes) {
+        const winner = provisionalWinners.get(winnerIndex);
+        if (winner === undefined) {
+          continue;
+        }
+
+        destinationsThisTick.add(winner.toKey);
+      }
+
+      const blockedWinners: number[] = [];
+      for (const winnerIndex of activeWinnerIndexes) {
+        const winner = provisionalWinners.get(winnerIndex);
+        if (winner === undefined) {
+          continue;
+        }
+
+        if (destinationsThisTick.has(winner.fromKey) || isSameTickIngressFor(winner.fromKey, currentTransferTick)) {
+          blockedWinners.push(winnerIndex);
+          outcomes[winnerIndex] = makeTransferFailure("occupied-destination", winner.from, winner.to);
+        }
+      }
+
+      if (blockedWinners.length === 0) {
+        break;
+      }
+
+      for (const winnerIndex of blockedWinners) {
+        activeWinnerIndexes.delete(winnerIndex);
+      }
+    }
+
     for (const candidate of candidates) {
+      if (!activeWinnerIndexes.has(candidate.index)) {
+        continue;
+      }
+
       if (outcomes[candidate.index] !== undefined) {
+        continue;
+      }
+
+      if (isSameTickIngressFor(candidate.fromKey, currentTransferTick)) {
+        outcomes[candidate.index] = makeTransferFailure("occupied-destination", candidate.from, candidate.to);
+        activeWinnerIndexes.delete(candidate.index);
         continue;
       }
 
@@ -505,10 +556,18 @@ export function createMap(width: number, height: number, seed: number | string):
         continue;
       }
 
+      if (occupantAt(candidate.to) !== undefined) {
+        outcomes[candidate.index] = makeTransferFailure("occupied-destination", candidate.from, candidate.to);
+        continue;
+      }
+
       occupants.delete(candidate.fromKey);
       occupants.set(candidate.toKey, kind);
+      lastIngressTickByTile.set(candidate.toKey, currentTransferTick);
       outcomes[candidate.index] = makeTransferSuccess(kind, candidate.from, candidate.to);
     }
+
+    currentTransferTick += 1;
 
     return outcomes;
   };
