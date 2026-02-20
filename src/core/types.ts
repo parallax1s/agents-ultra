@@ -3,6 +3,8 @@ export interface GridCoord {
   y: number;
 }
 
+export type TileType = "empty" | "iron-ore";
+
 export type Direction = 'N' | 'E' | 'S' | 'W';
 
 export const DIRECTION_SEQUENCE = ["N", "E", "S", "W"] as const;

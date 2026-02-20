@@ -1,10 +1,11 @@
-export type TileType = "empty" | "iron-ore";
+import type { TileType } from "./types";
 
 export interface GeneratedMap {
   width: number;
   height: number;
   getTile: (x: number, y: number) => TileType | undefined;
   isOre: (x: number, y: number) => boolean;
+  isWithinBounds: (x: number, y: number) => boolean;
 }
 
 const MIN_SPAWN_SIZE = 10;
@@ -148,5 +149,6 @@ export function createMap(width: number, height: number, seed: number | string):
     height,
     getTile,
     isOre,
+    isWithinBounds,
   };
 }

@@ -161,6 +161,19 @@ describe("createMap", () => {
     expect(map.isOre(0.5, 1)).toBe(false);
     expect(map.isOre(1, 0.5)).toBe(false);
   });
+
+  it("exposes stable bounds checks", () => {
+    const map = createMap(20, 20, 123);
+
+    expect(map.isWithinBounds(0, 0)).toBe(true);
+    expect(map.isWithinBounds(19, 19)).toBe(true);
+    expect(map.isWithinBounds(-1, 0)).toBe(false);
+    expect(map.isWithinBounds(0, -1)).toBe(false);
+    expect(map.isWithinBounds(20, 0)).toBe(false);
+    expect(map.isWithinBounds(0, 20)).toBe(false);
+    expect(map.isWithinBounds(0.5, 1)).toBe(false);
+    expect(map.isWithinBounds(1, 0.5)).toBe(false);
+  });
 });
 
 describe("placement controller validation", () => {
@@ -239,6 +252,42 @@ describe("placement controller validation", () => {
     controller.setCursor(oreTile);
     controller.clickRMB();
 
+    expect(snapshotPlaced()).toBe("");
+  });
+
+  it("returns stable, non-throwing results for out-of-bounds placement and removal", () => {
+    const width = 20;
+    const height = 20;
+    const { sim, snapshotPlaced } = createPlacementFixture(9001, width, height);
+
+    const controller = createPlacementController(sim, { cols: width, rows: height });
+    controller.selectKind("Miner");
+
+    const outOfBoundsTile = { x: -1, y: 0 };
+    const farOutsideTile = { x: width, y: height };
+    const fractionalTile = { x: 0.5, y: 1.5 };
+
+    expect(() => controller.setCursor(outOfBoundsTile)).not.toThrow();
+    expect(controller.getState().cursor).toBeNull();
+    expect(() => {
+      controller.clickLMB();
+      controller.clickRMB();
+    }).not.toThrow();
+    expect(snapshotPlaced()).toBe("");
+
+    expect(() => controller.setCursor(farOutsideTile)).not.toThrow();
+    expect(controller.getState().cursor).toBeNull();
+    expect(() => {
+      controller.clickLMB();
+      controller.clickRMB();
+    }).not.toThrow();
+    expect(snapshotPlaced()).toBe("");
+
+    expect(() => controller.setCursor(fractionalTile)).not.toThrow();
+    expect(() => {
+      controller.clickLMB();
+      controller.clickRMB();
+    }).not.toThrow();
     expect(snapshotPlaced()).toBe("");
   });
 });
