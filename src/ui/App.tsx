@@ -245,9 +245,36 @@ function pointerToTile(event: PointerEvent, canvas: HTMLCanvasElement): Tile | n
     return null;
   }
 
+  const worldW = WORLD_WIDTH * TILE_SIZE;
+  const worldH = WORLD_HEIGHT * TILE_SIZE;
+  if (worldW <= 0 || worldH <= 0) {
+    return null;
+  }
+
+  const canvasWidth = canvas.width > 0 ? canvas.width : rect.width;
+  const canvasHeight = canvas.height > 0 ? canvas.height : rect.height;
+  const scale = Math.max(0.0001, Math.min(canvasWidth / worldW, canvasHeight / worldH));
+  const tileSpan = TILE_SIZE * scale;
+  const viewW = worldW * scale;
+  const viewH = worldH * scale;
+  const offsetX = Math.floor((canvasWidth - viewW) / 2);
+  const offsetY = Math.floor((canvasHeight - viewH) / 2);
+
+  const gridLocalX = localX - offsetX;
+  const gridLocalY = localY - offsetY;
+  if (gridLocalX < 0 || gridLocalY < 0 || gridLocalX >= viewW || gridLocalY >= viewH) {
+    return null;
+  }
+
+  const x = Math.floor(gridLocalX / tileSpan);
+  const y = Math.floor(gridLocalY / tileSpan);
+  if (x < 0 || y < 0 || x >= WORLD_WIDTH || y >= WORLD_HEIGHT) {
+    return null;
+  }
+
   return {
-    x: Math.floor(localX / TILE_SIZE),
-    y: Math.floor(localY / TILE_SIZE),
+    x,
+    y,
   };
 }
 
