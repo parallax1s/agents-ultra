@@ -292,6 +292,57 @@ declare global {
   }
 }
 
+const toBoundaryCounter = (value: unknown): number | null => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  if (value <= 0) {
+    return 0;
+  }
+
+  return Math.floor(value);
+};
+
+const readPlacementTick = (sim: unknown): number | null => {
+  if (sim === null || typeof sim !== "object") {
+    return null;
+  }
+
+  const withSnapshot = sim as {
+    getPlacementSnapshot?: () => {
+      tick?: unknown;
+      tickCount?: unknown;
+    };
+    tick?: unknown;
+    tickCount?: unknown;
+  };
+
+  if (typeof withSnapshot.getPlacementSnapshot === "function") {
+    try {
+      const placementSnapshot = withSnapshot.getPlacementSnapshot();
+      const fromTick = toBoundaryCounter(placementSnapshot?.tick);
+      if (fromTick !== null) {
+        return fromTick;
+      }
+
+      const fromTickCount = toBoundaryCounter(placementSnapshot?.tickCount);
+      if (fromTickCount !== null) {
+        return fromTickCount;
+      }
+    } catch {
+      // Ignore and fall back to legacy fields below.
+    }
+  }
+
+  const fromTick = toBoundaryCounter(withSnapshot.tick);
+  if (fromTick !== null) {
+    return fromTick;
+  }
+
+  return toBoundaryCounter(withSnapshot.tickCount);
+};
+
 export function createRenderer(canvas: HTMLCanvasElement): RendererApi {
   const ctx = canvas.getContext("2d");
   if (!ctx) {
@@ -299,18 +350,46 @@ export function createRenderer(canvas: HTMLCanvasElement): RendererApi {
   }
 
   let ghost: { tile: Tile | null; valid: boolean } = { tile: null, valid: false };
+  let committedTick: number | null = null;
+  let committedSnapshot: Snapshot | null = null;
   let rafId: number | null = null;
   let destroyed = false;
 
   const readSnapshot = (): Snapshot | null => {
     const sim = window.__SIM__;
     if (typeof sim !== "object" || sim === null) {
+      committedTick = null;
+      committedSnapshot = null;
       return null;
     }
 
+    const nextTick = readPlacementTick(sim);
+    if (nextTick === null) {
+      try {
+        const snapshot = createSnapshot(sim);
+        if (committedSnapshot === null) {
+          committedSnapshot = snapshot;
+          committedTick = nextTick;
+        }
+        return snapshot;
+      } catch {
+        return null;
+      }
+    }
+
+    if (committedSnapshot !== null && committedTick === nextTick) {
+      return committedSnapshot;
+    }
+
     try {
-      return createSnapshot(sim);
+      const snapshot = createSnapshot(sim);
+      committedSnapshot = snapshot;
+      committedTick = nextTick;
+      return snapshot;
     } catch {
+      if (committedSnapshot !== null && committedTick === nextTick) {
+        return committedSnapshot;
+      }
       return null;
     }
   };

@@ -53,6 +53,7 @@ type SnapshotSim = {
   readonly tick?: number;
   readonly tickCount?: number;
   readonly elapsedMs?: number;
+  readonly getPlacementSnapshot?: () => { tick?: unknown; tickCount?: unknown };
   readonly map?: SnapshotMap;
   readonly getMap?: () => SnapshotMap;
 };
@@ -68,6 +69,15 @@ const clampCounter = (value: unknown): number => {
   }
 
   return value < 0 ? 0 : value;
+};
+
+const clampBoundaryCounter = (value: unknown): number => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 0;
+  }
+
+  const floored = Math.floor(value);
+  return floored < 0 ? 0 : floored;
 };
 
 const isObject = (value: unknown): value is SnapshotState => {
@@ -143,6 +153,26 @@ const getSnapshotMap = (sim: SnapshotSim): SnapshotMap | undefined => {
 
   if (typeof sim.getMap === "function") {
     return sim.getMap();
+  }
+
+  return undefined;
+};
+
+const getPlacementTiming = (sim: SnapshotSim): { tick?: unknown; tickCount?: unknown } | undefined => {
+  if (typeof sim.getPlacementSnapshot !== "function") {
+    return undefined;
+  }
+
+  try {
+    const snapshot = sim.getPlacementSnapshot();
+    if (isObject(snapshot)) {
+      return {
+        tick: snapshot.tick,
+        tickCount: snapshot.tickCount,
+      };
+    }
+  } catch {
+    return undefined;
   }
 
   return undefined;
@@ -359,8 +389,9 @@ export const createSnapshot = (sim: SnapshotSim): Snapshot => {
   const map = getSnapshotMap(sim);
   const width = clampCounter(sim.width ?? map?.width);
   const height = clampCounter(sim.height ?? map?.height);
-  const tick = clampCounter(sim.tick);
-  const tickCount = clampCounter(sim.tickCount);
+  const placement = getPlacementTiming(sim);
+  const tick = clampBoundaryCounter(placement?.tick ?? sim.tick);
+  const tickCount = clampBoundaryCounter(placement?.tickCount ?? sim.tickCount);
   const elapsedMs = clampCounter(sim.elapsedMs);
   const tileSize = typeof sim.tileSize === "number" && Number.isFinite(sim.tileSize)
     ? sim.tileSize

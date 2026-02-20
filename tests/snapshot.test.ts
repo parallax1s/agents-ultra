@@ -432,6 +432,21 @@ describe("createSnapshot", () => {
     expect(postCommitRead.entities[0].items).toEqual(["iron-ore", null, null] as ReadonlyArray<ItemKind | null>);
   });
 
+  it("uses committed tick boundaries for snapshot timing", () => {
+    const boundarySnapshot = createSnapshot({
+      width: 12,
+      height: 8,
+      tileSize: 16,
+      tick: 4.75,
+      tickCount: 4.2,
+      elapsedMs: 152.5,
+    });
+
+    expect(boundarySnapshot.time.tick).toBe(4);
+    expect(boundarySnapshot.time.tickCount).toBe(4);
+    expect(boundarySnapshot.time.elapsedMs).toBe(152.5);
+  });
+
   it("replays deterministic display data for a fixed tick sequence", () => {
     const { first, second } = runFixedTickSnapshot(1337);
     const { first: rerun } = runFixedTickSnapshot(1337);

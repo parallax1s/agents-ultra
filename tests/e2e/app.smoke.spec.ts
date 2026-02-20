@@ -371,9 +371,12 @@ test.describe("Agents Ultra app smoke", () => {
     await page.waitForTimeout(250);
     const frozenTick = (await readSimSnapshot(page)).tickCount;
     expect(frozenTick).toBeLessThanOrEqual(pausedTick + 1);
+    const frozenSnapshot = await readSimSnapshot(page);
     await page.waitForTimeout(250);
     const stillFrozenTick = (await readSimSnapshot(page)).tickCount;
     expect(stillFrozenTick).toBe(frozenTick);
+    const stillFrozenSnapshot = await readSimSnapshot(page);
+    expect(stillFrozenSnapshot.entities).toEqual(frozenSnapshot.entities);
 
     await page.keyboard.press("Space");
     expect(prePauseTick).toBeGreaterThan(0);
