@@ -24,6 +24,20 @@ type SimSnapshot = {
   entities: SimEntity[];
 };
 
+type TickSample = {
+  tick: number;
+  tickCount: number;
+  elapsedMs: number;
+  signature: string;
+  entityStates: ReadonlyArray<{
+    id: string;
+    kind: string;
+    rot: Rotation;
+    x: number;
+    y: number;
+  }>;
+};
+
 type CandidateTile = {
   found: boolean;
   tileX: number;
@@ -303,6 +317,96 @@ const expectTickCountToIncrease = async (page: Page, expected: number): Promise<
     .toBeGreaterThan(expected);
 };
 
+const createEntitySignature = (snapshot: SimSnapshot): string => {
+  return snapshot.entities
+    .map((entity) => `${entity.id}:${entity.kind}:${entity.rot}:${entity.pos.x},${entity.pos.y}`)
+    .sort()
+    .join("|");
+};
+
+const readEntityStates = (snapshot: SimSnapshot): ReadonlyArray<{ id: string; kind: string; rot: Rotation; x: number; y: number }> => {
+  return snapshot.entities
+    .map((entity) => ({
+      id: entity.id,
+      kind: entity.kind,
+      rot: entity.rot,
+      x: entity.pos.x,
+      y: entity.pos.y,
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+};
+
+const expectEntityStep = (
+  previous: ReadonlyArray<{ id: string; kind: string; rot: string; x: number; y: number }>,
+  current: ReadonlyArray<{ id: string; kind: string; rot: string; x: number; y: number }>,
+): void => {
+  expect(current.length).toBe(previous.length);
+  expect(current.map((entity) => entity.id)).toEqual(previous.map((entity) => entity.id));
+
+  for (let index = 0; index < previous.length; index += 1) {
+    const from = previous[index];
+    const to = current[index];
+    if (from === undefined || to === undefined) {
+      throw new Error("Entity state snapshot missing expected entry");
+    }
+
+    const xDelta = Math.abs(from.x - to.x);
+    const yDelta = Math.abs(from.y - to.y);
+    const maxTileDelta = Math.max(xDelta, yDelta);
+    expect(maxTileDelta).toBeLessThanOrEqual(1);
+  }
+};
+
+const sampleTickSamples = async (page: Page, sampleCount: number, delayMs: number): Promise<TickSample[]> => {
+  const samples: TickSample[] = [];
+  for (let sample = 0; sample < sampleCount; sample += 1) {
+    const snapshot = await readSimSnapshot(page);
+    samples.push({
+      tick: snapshot.tick,
+      tickCount: snapshot.tickCount,
+      elapsedMs: snapshot.elapsedMs,
+      signature: createEntitySignature(snapshot),
+      entityStates: readEntityStates(snapshot),
+    });
+    if (sample + 1 < sampleCount) {
+      await page.waitForTimeout(delayMs);
+    }
+  }
+
+  return samples;
+};
+
+const expectSamplesNoProgress = (samples: readonly TickSample[]): void => {
+  expect(samples.length).toBeGreaterThan(1);
+  const baseline = samples[0]?.signature;
+  const baselineTick = samples[0]?.tickCount;
+  for (const sample of samples) {
+    expect(sample.tickCount).toBe(baselineTick);
+    expect(sample.signature).toBe(baseline);
+  }
+};
+
+const expectTickCadence = (samples: readonly TickSample[]): void => {
+  expect(samples.length).toBeGreaterThan(1);
+
+  let observedForwardMovement = false;
+  for (let index = 1; index < samples.length; index += 1) {
+    const previous = samples[index - 1];
+    const current = samples[index];
+
+    expect(current.tickCount).toBeGreaterThanOrEqual(previous.tickCount);
+    expect(current.tickCount - previous.tickCount).toBeLessThanOrEqual(4);
+
+    if (current.tickCount > previous.tickCount) {
+      observedForwardMovement = true;
+    }
+
+    expectEntityStep(previous.entityStates, current.entityStates);
+  }
+
+  expect(observedForwardMovement).toBeTruthy();
+};
+
 test.describe("Agents Ultra app smoke", () => {
   test("renders canvas and palette buttons", async ({ page }) => {
     await waitForAppReady(page);
@@ -367,22 +471,22 @@ test.describe("Agents Ultra app smoke", () => {
     await expectTickCountToIncrease(page, runningTick);
     const prePauseTick = (await readSimSnapshot(page)).tickCount;
     await page.keyboard.press("Space");
-    const pausedTick = (await readSimSnapshot(page)).tickCount;
-    await page.waitForTimeout(250);
-    const frozenTick = (await readSimSnapshot(page)).tickCount;
-    expect(frozenTick).toBeLessThanOrEqual(pausedTick + 1);
-    const frozenSnapshot = await readSimSnapshot(page);
-    await page.waitForTimeout(250);
-    const stillFrozenTick = (await readSimSnapshot(page)).tickCount;
-    expect(stillFrozenTick).toBe(frozenTick);
-    const stillFrozenSnapshot = await readSimSnapshot(page);
-    expect(stillFrozenSnapshot.entities).toEqual(frozenSnapshot.entities);
+    const pausedSamples = await sampleTickSamples(page, 4, 80);
+    expectSamplesNoProgress(pausedSamples);
+    const frozenTick = pausedSamples[pausedSamples.length - 1]?.tickCount;
+    if (frozenTick === undefined) {
+      throw new Error("Unable to sample paused tick count");
+    }
 
+    expect(frozenTick).toBeLessThanOrEqual(prePauseTick + 1);
     await page.keyboard.press("Space");
-    expect(prePauseTick).toBeGreaterThan(0);
-    await expectTickCountToIncrease(page, frozenTick);
+    const resumedSamples = await sampleTickSamples(page, 6, 50);
+    const resumedTick = resumedSamples[resumedSamples.length - 1]?.tickCount;
+    if (resumedTick === undefined) {
+      throw new Error("Unable to sample resumed tick count");
+    }
 
-    const resumedTick = (await readSimSnapshot(page)).tickCount;
+    expectTickCadence(resumedSamples);
     expect(resumedTick).toBeGreaterThan(frozenTick);
 
     await expect(miner).toHaveAttribute("aria-pressed", "false");
