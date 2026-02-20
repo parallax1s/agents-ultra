@@ -4,6 +4,11 @@ import { registerEntity } from "../src/core/registry";
 import { createSim } from "../src/core/sim";
 import { rotateDirection, type Direction, type EntityBase, type ItemKind } from "../src/core/types";
 import { attachInput } from "../src/ui/input";
+import {
+  collect3BeltTransportTrace,
+  findFirstTransportTraceDivergence,
+  type TransportTraceFrame,
+} from "./setup";
 
 const TICK_MS = 1000 / 60;
 
@@ -20,6 +25,7 @@ const COMPAT_CHAIN_FURNACE_KIND = "compat-cadence-regression-furnace";
 let definitionRegistered = false;
 let oreToPlatePathRegistered = false;
 let cadenceChainPathRegistered = false;
+let transportTraceBeltKindRegistered = false;
 let compatKindCounter = 0;
 
 type Vector = {
@@ -68,6 +74,7 @@ const COMPAT_CHAIN_MINER_ATTEMPTS = 60;
 const COMPAT_CHAIN_BELT_ATTEMPTS = 15;
 const COMPAT_CHAIN_INSERTER_ATTEMPTS = 20;
 const COMPAT_CHAIN_FURNACE_SMELT_TICKS = 180;
+const COMPAT_TRANSPORT_TRACE_BELT_KIND = "compat-transport-trace-belt";
 const ORE_TO_PLATE_DIRECTION: Record<Direction, Vector> = {
   N: { x: 0, y: -1 },
   E: { x: 1, y: 0 },
@@ -99,6 +106,14 @@ const asState = <T extends object>(value: unknown): T | undefined => {
   }
 
   return value as T;
+};
+
+const frameAtTick = (frames: readonly TransportTraceFrame[], tick: number): TransportTraceFrame => {
+  const frame = frames[tick - 1];
+  if (frame === undefined) {
+    throw new Error(`Expected transport frame at tick ${tick}`);
+  }
+  return frame;
 };
 
 const offsetFrom = (direction: Direction): Vector => ORE_TO_PLATE_DIRECTION[direction];
@@ -484,6 +499,58 @@ const ensureCadenceChainDefinitions = (): void => {
   cadenceChainPathRegistered = true;
 };
 
+const ensureTransportTraceBeltDefinition = (): void => {
+  if (transportTraceBeltKindRegistered) {
+    return;
+  }
+
+  registerEntity(COMPAT_TRANSPORT_TRACE_BELT_KIND, {
+    create: () => ({
+      ticks: 0,
+      item: null as ItemKind | null,
+      attempts: 0,
+      moved: 0,
+      blocked: 0,
+    }),
+    update: (entity, _dtMs, sim) => {
+      const state = asState<{
+        ticks: number;
+        item: ItemKind | null;
+        attempts: number;
+        moved: number;
+        blocked: number;
+      }>(entity.state);
+      if (state === undefined) {
+        return;
+      }
+
+      state.ticks += 1;
+      if (state.ticks % 15 !== 0 || state.item === null) {
+        return;
+      }
+
+      state.attempts += 1;
+      const ahead = {
+        x: entity.pos.x + offsetFrom(entity.rot).x,
+        y: entity.pos.y + offsetFrom(entity.rot).y,
+      };
+      const target = findKindAt(sim, ahead, COMPAT_TRANSPORT_TRACE_BELT_KIND);
+      const targetState = asState<{ item: ItemKind | null }>(target?.state);
+
+      if (targetState === undefined || targetState.item !== null) {
+        state.blocked += 1;
+        return;
+      }
+
+      targetState.item = state.item;
+      state.item = null;
+      state.moved += 1;
+    },
+  });
+
+  transportTraceBeltKindRegistered = true;
+};
+
 type Listener = (event: unknown) => void;
 
 const createMockInputStage = () => {
@@ -808,6 +875,91 @@ describe("sim API compatibility", () => {
     expect(first.furnace.completed).toBe(1);
     expect(first.inserter.holding).toBe("iron-ore");
     expect(first.belt.item).toBeNull();
+  });
+
+  const collectThreeBeltTrace = (conflictSinkFillTick?: number): TransportTraceFrame[] => {
+    ensureTransportTraceBeltDefinition();
+    const sim = createSim({ width: 8, height: 3, seed: 44 });
+    const sourceId = sim.addEntity({ kind: COMPAT_TRANSPORT_TRACE_BELT_KIND, pos: { x: 1, y: 1 }, rot: "E" });
+    const middleId = sim.addEntity({ kind: COMPAT_TRANSPORT_TRACE_BELT_KIND, pos: { x: 2, y: 1 }, rot: "E" });
+    const sinkId = sim.addEntity({ kind: COMPAT_TRANSPORT_TRACE_BELT_KIND, pos: { x: 3, y: 1 }, rot: "E" });
+
+    const source = sim.getEntityById(sourceId);
+    const middle = sim.getEntityById(middleId);
+    const sink = sim.getEntityById(sinkId);
+
+    if (source?.state === undefined || middle?.state === undefined || sink?.state === undefined) {
+      throw new Error("Expected all three belts to have states for transport tracing");
+    }
+
+    const sourceState = asState<{ item?: ItemKind | null }>(source.state);
+    const middleState = asState<{ item?: ItemKind | null }>(middle.state);
+    const sinkState = asState<{ item?: ItemKind | null }>(sink.state);
+
+    if (sourceState === undefined || middleState === undefined || sinkState === undefined) {
+      throw new Error("Expected typed belt states for transport tracing");
+    }
+
+    sourceState.item = "iron-ore";
+    middleState.item = null;
+    sinkState.item = null;
+
+    return collect3BeltTransportTrace({
+      sim,
+      sourceId,
+      middleId,
+      sinkId,
+      stepMs: TICK_MS,
+      steps: 30,
+      beforeStep: (tick) => {
+        if (tick === conflictSinkFillTick) {
+          sinkState.item = "iron-plate";
+        }
+      },
+    });
+  };
+
+  it("produces deterministic normalized per-tick transport traces for a 3-belt chain", () => {
+    const first = collectThreeBeltTrace();
+    const second = collectThreeBeltTrace();
+
+    expect(findFirstTransportTraceDivergence(first, second)).toBeNull();
+    expect(first).toHaveLength(30);
+    expect(frameAtTick(first, 15)).toMatchObject({
+      sourceBefore: "iron-ore",
+      sourceAfter: "empty",
+      middleBefore: "empty",
+      middleAfter: "empty",
+      sinkAfter: "iron-ore",
+      sourceToMiddle: false,
+      middleToSink: false,
+    });
+    expect(frameAtTick(first, 30)).toMatchObject({
+      sourceBefore: "empty",
+      sourceAfter: "empty",
+      middleBefore: "empty",
+      middleAfter: "empty",
+      sinkBefore: "iron-ore",
+      sinkAfter: "iron-ore",
+    });
+  });
+
+  it("identifies the first divergent transport tick between conflicting 3-belt branches", () => {
+    const cleanRun = collectThreeBeltTrace();
+    const conflictedRun = collectThreeBeltTrace(15);
+
+    const divergence = findFirstTransportTraceDivergence(cleanRun, conflictedRun);
+    expect(divergence).not.toBeNull();
+    if (divergence === null) {
+      return;
+    }
+
+    expect(divergence.tick).toBe(15);
+    expect(divergence.index).toBe(14);
+    expect(divergence.expected).toMatchObject({ sourceToMiddle: false });
+    expect(divergence.actual).toMatchObject({ sourceToMiddle: true });
+    expect(divergence.expected).toMatchObject({ sinkAfter: "iron-ore" });
+    expect(divergence.actual).toMatchObject({ middleAfter: "iron-ore", sinkAfter: "iron-plate" });
   });
 
   it("enforces exact miner->belt->inserter->furnace progression at 60/20/15/180 boundaries", () => {
