@@ -75,6 +75,14 @@ Notes:
 - `npm run test` (maintenance/local): run fast checks locally before/while editing.
 - `npm run test:strict` (CI/verification): run repository hygiene checks first, then strict unit and e2e tests.
 
+### Movement-critical pre-merge check
+
+```bash
+npm run test:movement
+```
+
+This runs the movement-focused regression subset (`map/sim/sim-compat` units plus movement smoke E2E).
+
 Expected behavior when dev dependencies are missing:
 - `npm run test`: skips missing optional test suites and exits successfully.
 - `npm run test:strict`: runs `npm run verify:hygiene` first (which fails fast on typecheck/build issues), then executes strict tests. In strict mode it exits non-zero with install guidance when required test binaries are absent.
