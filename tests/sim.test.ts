@@ -2,6 +2,7 @@ import { getDefinition, registerEntity } from "../src/core/registry";
 import { createSim } from "../src/core/sim";
 import { attachInput } from "../src/ui/input";
 import { rotateDirection, DIRECTION_SEQUENCE, type Direction, type EntityBase, type ItemKind } from "../src/core/types";
+import "../src/entities/all";
 
 let kindCounter = 0;
 
@@ -117,6 +118,11 @@ type ChainFurnaceState = {
   crafting: boolean;
   progressTicks: number;
   completed: number;
+};
+
+type CanonicalBeltState = {
+  tickPhase: number;
+  item: ItemKind | null;
 };
 
 const add = (left: Vector, right: Vector): Vector => ({
@@ -1179,6 +1185,51 @@ describe("simulation registry and loop", () => {
     };
 
     expect(runScenario(true)).toBe(runScenario(false));
+  });
+
+  test("prioritizes canonical belt outbound transfer over same-tick inbound contention", () => {
+    const sim = createSim({ width: 10, height: 3, seed: 305 });
+
+    const westSourceId = sim.addEntity({ kind: "belt", pos: { x: 1, y: 1 }, rot: "E" });
+    const forwardingId = sim.addEntity({ kind: "belt", pos: { x: 2, y: 1 }, rot: "E" });
+    const sinkId = sim.addEntity({ kind: "belt", pos: { x: 3, y: 1 }, rot: "E" });
+    const southSourceId = sim.addEntity({ kind: "belt", pos: { x: 2, y: 2 }, rot: "N" });
+
+    const westSource = sim.getEntityById(westSourceId);
+    const forwarding = sim.getEntityById(forwardingId);
+    const sink = sim.getEntityById(sinkId);
+    const southSource = sim.getEntityById(southSourceId);
+
+    if (westSource?.state === undefined || forwarding?.state === undefined || sink?.state === undefined || southSource?.state === undefined) {
+      throw new Error("Expected all canonical belt entities to have states");
+    }
+
+    const westState = asState<CanonicalBeltState>(westSource.state);
+    const forwardingState = asState<CanonicalBeltState>(forwarding.state);
+    const sinkState = asState<CanonicalBeltState>(sink.state);
+    const southState = asState<CanonicalBeltState>(southSource.state);
+
+    if (westState === undefined || forwardingState === undefined || sinkState === undefined || southState === undefined) {
+      throw new Error("Expected typed canonical belt states");
+    }
+
+    westState.item = "iron-ore";
+    forwardingState.item = "iron-plate";
+    southState.item = "iron-ore";
+
+    sim.step((1000 / 60) * 15);
+
+    expect(westState).toMatchObject({ item: "iron-ore", tickPhase: 15 });
+    expect(southState).toMatchObject({ item: "iron-ore", tickPhase: 15 });
+    expect(forwardingState).toMatchObject({ item: null, tickPhase: 15 });
+    expect(sinkState).toMatchObject({ item: "iron-plate", tickPhase: 15 });
+
+    sim.step((1000 / 60) * 15);
+
+    expect(westState).toMatchObject({ item: null, tickPhase: 30 });
+    expect(southState).toMatchObject({ item: "iron-ore", tickPhase: 30 });
+    expect(forwardingState).toMatchObject({ item: "iron-ore", tickPhase: 30 });
+    expect(sinkState).toMatchObject({ item: "iron-plate", tickPhase: 30 });
   });
 
   test("tracks add/remove bookkeeping and handles missing removals", () => {
