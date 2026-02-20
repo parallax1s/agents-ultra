@@ -1,5 +1,10 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const rawPort = Number.parseInt(process.env.PLAYWRIGHT_PORT ?? "4173", 10);
+const port = Number.isFinite(rawPort) && rawPort > 1024 && rawPort < 65535 ? rawPort : 4173;
+const host = process.env.PLAYWRIGHT_HOST ?? "127.0.0.1";
+const baseUrl = `http://${host}:${port}`;
+
 export default defineConfig({
   testDir: "./tests/e2e",
   timeout: 30_000,
@@ -11,7 +16,7 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: "list",
   use: {
-    baseURL: "http://127.0.0.1:4173",
+    baseURL: baseUrl,
     actionTimeout: 8_000,
     navigationTimeout: 15_000,
     trace: "on-first-retry",
@@ -25,8 +30,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "npm run dev -- --host 127.0.0.1 --port 4173",
-    url: "http://127.0.0.1:4173",
+    command: `npm run dev -- --host ${host} --port ${port}`,
+    url: baseUrl,
     timeout: 120_000,
     reuseExistingServer: true,
   },
