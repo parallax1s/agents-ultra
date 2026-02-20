@@ -6,6 +6,13 @@ export type InputMetrics = {
     cols: number;
     rows: number;
   };
+  viewport?: {
+    width: number;
+    height: number;
+    offsetX?: number;
+    offsetY?: number;
+    scale?: number;
+  };
 };
 
 type KeyEventName = "keydown";
@@ -61,6 +68,22 @@ const clamp = (value: number, min: number, max: number): number => {
   return value;
 };
 
+const toPositiveScale = (value: number | null | undefined, fallback: number): number => {
+  if (typeof value !== "number" || Number.isNaN(value) || !Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+
+  return value;
+};
+
+const toFiniteNumber = (value: number | null | undefined): number | null => {
+  if (typeof value !== "number" || Number.isNaN(value) || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return value;
+};
+
 export const attachInput = ({ app, stage, metrics }: AttachInputArgs): InputController => {
   void app;
 
@@ -71,13 +94,33 @@ export const attachInput = ({ app, stage, metrics }: AttachInputArgs): InputCont
   const toGrid = (pt: { x: number; y: number }): GridCoord | null => {
     const { tileSize, gridSize } = metrics;
     const { cols, rows } = gridSize;
+    const scale = toPositiveScale(toFiniteNumber(metrics.viewport?.scale), 1);
+    const tileSpan = tileSize * scale;
+    const offsetX = toFiniteNumber(metrics.viewport?.offsetX) ?? 0;
+    const offsetY = toFiniteNumber(metrics.viewport?.offsetY) ?? 0;
+    const viewportWidth = toFiniteNumber(metrics.viewport?.width);
+    const viewportHeight = toFiniteNumber(metrics.viewport?.height);
 
-    if (!Number.isFinite(tileSize) || tileSize <= 0 || cols <= 0 || rows <= 0) {
+    if (!Number.isFinite(tileSize) || tileSize <= 0 || cols <= 0 || rows <= 0 || tileSpan <= 0) {
       return null;
     }
 
-    const gridX = Math.floor(pt.x / tileSize);
-    const gridY = Math.floor(pt.y / tileSize);
+    const localX = pt.x - offsetX;
+    const localY = pt.y - offsetY;
+
+    if (localX < 0 || localY < 0) {
+      return null;
+    }
+
+    if (
+      (typeof viewportWidth === "number" && localX > viewportWidth)
+      || (typeof viewportHeight === "number" && localY > viewportHeight)
+    ) {
+      return null;
+    }
+
+    const gridX = Math.floor(localX / tileSpan);
+    const gridY = Math.floor(localY / tileSpan);
 
     if (gridX < 0 || gridY < 0 || gridX >= cols || gridY >= rows) {
       return null;
