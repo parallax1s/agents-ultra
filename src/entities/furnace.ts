@@ -64,11 +64,9 @@ export class Furnace {
       return;
     }
 
-    if (this.smeltProgressTicks < FURNACE_SMELT_TICKS) {
-      this.smeltProgressTicks += 1;
-    }
+    this.smeltProgressTicks = Math.min(this.smeltProgressTicks + 1, FURNACE_SMELT_TICKS);
 
-    if (this.smeltProgressTicks < FURNACE_SMELT_TICKS) {
+    if (this.smeltProgressTicks !== FURNACE_SMELT_TICKS) {
       return;
     }
 
