@@ -150,6 +150,47 @@ export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
     };
   };
 
+  const createTickStartStateView = (
+    state: Record<string, unknown>,
+  ): Record<string, unknown> => {
+    const snapshotState = cloneSnapshotValue(state);
+    if (!isPlainObject(snapshotState)) {
+      return state;
+    }
+
+    const stateSnapshot = snapshotState;
+    return new Proxy(state, {
+      get(target, property, receiver): unknown {
+        if (typeof property === "string" && Object.prototype.hasOwnProperty.call(stateSnapshot, property)) {
+          return stateSnapshot[property];
+        }
+        return Reflect.get(target, property, receiver);
+      },
+      has(target, property): boolean {
+        if (typeof property === "string" && Object.prototype.hasOwnProperty.call(stateSnapshot, property)) {
+          return true;
+        }
+        return Reflect.has(target, property);
+      },
+      set(target, property, value, receiver): boolean {
+        if (typeof property === "string" && Object.prototype.hasOwnProperty.call(stateSnapshot, property)) {
+          stateSnapshot[property] = value;
+        }
+        return Reflect.set(target, property, value, receiver);
+      },
+    });
+  };
+
+  const createTickStartEntitySnapshot = (entity: EntityBase): EntityBase => {
+    const snapshot = cloneEntityForPublic(entity);
+    if (!isPlainObject(entity.state)) {
+      return snapshot;
+    }
+
+    snapshot.state = createTickStartStateView(entity.state as Record<string, unknown>);
+    return snapshot;
+  };
+
   const removeFromIndexedCell = (id: string, index: CellIndex): void => {
     const previousKey = index.cellKeyById.get(id);
     if (previousKey === undefined) {
@@ -338,6 +379,20 @@ export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
   const runTick = (): void => {
     runningStep = true;
     try {
+      const tickStartEntitySnapshotById = new Map<string, EntityBase>();
+      const tickStartEntityIdsByCell = new Map<string, Set<string>>();
+
+      for (const [id, entity] of entitiesById) {
+        tickStartEntitySnapshotById.set(id, createTickStartEntitySnapshot(entity));
+        const key = toCellKey(entity.pos);
+        const idsAtCell = tickStartEntityIdsByCell.get(key);
+        if (idsAtCell === undefined) {
+          tickStartEntityIdsByCell.set(key, new Set([id]));
+          continue;
+        }
+        idsAtCell.add(id);
+      }
+
       const ids = Array.from(entitiesById.keys()).sort((leftId, rightId) => {
         const leftEntity = entitiesById.get(leftId);
         const rightEntity = entitiesById.get(rightId);
@@ -367,12 +422,38 @@ export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
 
         return leftOrder - rightOrder;
       });
+
+      const getTickStartEntitiesAt = (pos: GridCoord): EntityBase[] => {
+        if (isOutOfBounds(pos, worldWidth, worldHeight)) {
+          return [];
+        }
+
+        const idsAtCell = tickStartEntityIdsByCell.get(toCellKey(pos));
+        if (idsAtCell === undefined) {
+          return [];
+        }
+
+        const entities: EntityBase[] = [];
+        for (const id of idsAtCell) {
+          const entity = tickStartEntitySnapshotById.get(id);
+          if (entity !== undefined) {
+            entities.push(entity);
+          }
+        }
+
+        return entities;
+      };
+
+      const getTickStartEntities = (): EntityBase[] => {
+        return Array.from(tickStartEntitySnapshotById.values());
+      };
+
       const updateContext = {
         width: worldWidth,
         height: worldHeight,
-        getEntitiesAt: getInternalEntitiesAt,
+        getEntitiesAt: getTickStartEntitiesAt,
         getEntityById: getInternalEntityById,
-        getAllEntities: getInternalAllEntities,
+        getAllEntities: getTickStartEntities,
       };
 
       for (const id of ids) {
