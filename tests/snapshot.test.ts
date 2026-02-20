@@ -381,7 +381,7 @@ describe("createSnapshot", () => {
     expect(afterMutation.entities[0]).toEqual(secondRead.entities[0]);
   });
 
-  it("keeps same-tick snapshot reads repeatable when renderer mutates returned data", () => {
+  it("keeps snapshot reads stable across a partial tick and only changes after commit", () => {
     ensureBeltDefinition();
 
     const sim = createSim({ width: 12, height: 8, seed: 88 });
@@ -391,31 +391,45 @@ describe("createSnapshot", () => {
       rot: "E",
     });
 
-    const snapshotInput = {
+    const snapshotNow = () => createSnapshot({
       ...sim,
       width: 12,
       height: 8,
       tileSize: 16,
-    };
-    const firstRenderRead = createSnapshot(snapshotInput);
-    const baseline = createSnapshot(snapshotInput);
-    const renderedItems = firstRenderRead.entities[0] as {
+    });
+
+    const baseline = snapshotNow();
+    const baselineItems = baseline.entities[0].items as ReadonlyArray<ItemKind | null>;
+    expect(baseline.time.tick).toBe(0);
+    expect(baselineItems).toEqual([null, "iron-ore", null] as ReadonlyArray<ItemKind | null>);
+
+    sim.step(10);
+
+    const preCommitRead = snapshotNow();
+    const preCommitItems = preCommitRead.entities[0] as {
       items: ReadonlyArray<ItemKind | null>;
     };
-    expect(Object.isFrozen(firstRenderRead)).toBe(true);
-    expect(Object.isFrozen(firstRenderRead.entities)).toBe(true);
-    expect(Object.isFrozen(renderedItems)).toBe(true);
+
+    expect(Object.isFrozen(preCommitRead)).toBe(true);
+    expect(Object.isFrozen(preCommitRead.entities)).toBe(true);
+    expect(Object.isFrozen(preCommitItems)).toBe(true);
+    expect(Object.isFrozen(preCommitItems.items)).toBe(true);
+    expect(preCommitRead.time.tick).toBe(0);
+    expect(preCommitItems.items).toEqual(baselineItems);
 
     expect(() => {
-      renderedItems[0] = "iron-plate";
-    }).toThrow();
-    expect(() => {
-      (renderedItems as unknown as ItemKind[]).push("iron-ore");
+      (preCommitItems as { items: ItemKind[] }).items[0] = "iron-plate";
     }).toThrow();
 
-    const secondRenderRead = createSnapshot(snapshotInput);
-    expect(secondRenderRead).toEqual(baseline);
-    expect(secondRenderRead.entities[0].items).toEqual(baseline.entities[0].items);
+    const repeatedPreCommit = snapshotNow();
+    expect(repeatedPreCommit).toEqual(preCommitRead);
+    expect(repeatedPreCommit.entities[0].items).toEqual(preCommitItems.items);
+
+    sim.step(10);
+
+    const postCommitRead = snapshotNow();
+    expect(postCommitRead.time.tick).toBe(1);
+    expect(postCommitRead.entities[0].items).toEqual(["iron-ore", null, null] as ReadonlyArray<ItemKind | null>);
   });
 
   it("replays deterministic display data for a fixed tick sequence", () => {
