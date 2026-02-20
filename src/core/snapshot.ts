@@ -78,27 +78,33 @@ const asSnapshotState = (value: unknown): SnapshotState | undefined => {
   return isObject(value) ? value : undefined;
 };
 
-const isPlainObject = (value: unknown): value is SnapshotState => {
+const cloneSnapshotValue = (value: unknown, seen = new WeakMap<object, unknown>()): unknown => {
+  if (typeof value === "function") {
+    return undefined;
+  }
+
   if (!isObject(value)) {
-    return false;
-  }
-
-  const proto = Object.getPrototypeOf(value);
-  return proto === Object.prototype || proto === null;
-};
-
-const cloneSnapshotValue = (value: unknown): unknown => {
-  if (Array.isArray(value)) {
-    return value.map((entry) => cloneSnapshotValue(entry));
-  }
-
-  if (!isPlainObject(value)) {
     return value;
   }
 
+  const existing = seen.get(value);
+  if (existing !== undefined) {
+    return existing;
+  }
+
+  if (Array.isArray(value)) {
+    const clone: unknown[] = [];
+    seen.set(value, clone);
+    for (const entry of value) {
+      clone.push(cloneSnapshotValue(entry, seen));
+    }
+    return clone;
+  }
+
   const clone: SnapshotState = {};
+  seen.set(value, clone);
   for (const key of Object.keys(value)) {
-    clone[key] = cloneSnapshotValue(value[key]);
+    clone[key] = cloneSnapshotValue((value as SnapshotState)[key], seen);
   }
 
   return clone;
@@ -282,21 +288,23 @@ const extractFurnaceProgress = (state: SnapshotState | undefined): number => {
   return 0;
 };
 
-const deepFreezeSnapshot = (value: unknown): void => {
-  if (!isObject(value) || Object.isFrozen(value)) {
+const deepFreezeSnapshot = (value: unknown, seen = new WeakSet<object>()): void => {
+  if (!isObject(value) || seen.has(value)) {
     return;
   }
 
+  seen.add(value);
+
   if (Array.isArray(value)) {
     for (const item of value) {
-      deepFreezeSnapshot(item);
+      deepFreezeSnapshot(item, seen);
     }
     Object.freeze(value);
     return;
   }
 
   for (const key of Object.keys(value)) {
-    deepFreezeSnapshot((value as SnapshotState)[key]);
+    deepFreezeSnapshot((value as SnapshotState)[key], seen);
   }
 
   Object.freeze(value);
