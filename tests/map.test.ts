@@ -352,21 +352,23 @@ describe("placement controller validation", () => {
 });
 
 describe("map transfer operations", () => {
-  it("defers chain relay so middle cannot forward on the tick it receives an item", () => {
+  it("uses tick-start source eligibility and blocks same-tick chained relay requests", () => {
     const map = createMap(3, 3, 123);
 
     const source = { x: 0, y: 1 };
     const middle = { x: 1, y: 1 };
-    const sink = { x: 2, y: 1 };
+    const sinkA = { x: 2, y: 0 };
+    const sinkB = { x: 2, y: 2 };
 
     map.place("belt", source);
 
     const outcomes = map.transferMany([
       { from: source, to: middle },
-      { from: middle, to: sink },
+      { from: middle, to: sinkA },
+      { from: middle, to: sinkB },
     ]);
 
-    expect(outcomes).toHaveLength(2);
+    expect(outcomes).toHaveLength(3);
 
     expect(outcomes[0]).toMatchObject({
       success: true,
@@ -380,12 +382,76 @@ describe("map transfer operations", () => {
       ok: false,
       reason: "empty-source",
       from: middle,
+      to: sinkA,
+    });
+
+    expect(outcomes[2]).toMatchObject({
+      success: false,
+      ok: false,
+      reason: "empty-source",
+      from: middle,
+      to: sinkB,
+    });
+
+    expect(map.hasEntityAt(source)).toBe(false);
+    expect(map.hasEntityAt(middle)).toBe(true);
+    expect(map.hasEntityAt(sinkA)).toBe(false);
+    expect(map.hasEntityAt(sinkB)).toBe(false);
+
+    const sameTickRelayAttempts = map.transferMany([
+      { from: middle, to: sinkA },
+      { from: middle, to: sinkB },
+    ]);
+
+    expect(sameTickRelayAttempts).toHaveLength(2);
+    expect(sameTickRelayAttempts[0]).toMatchObject({
+      success: false,
+      ok: false,
+      reason: "occupied-destination",
+      from: middle,
+      to: sinkA,
+    });
+    expect(sameTickRelayAttempts[1]).toMatchObject({
+      success: false,
+      ok: false,
+      reason: "occupied-destination",
+      from: middle,
+      to: sinkB,
+    });
+  });
+
+  it("defers handoff until the next transfer tick and blocks same-tick re-relay", async () => {
+    const map = createMap(4, 3, 123);
+
+    const source = { x: 0, y: 1 };
+    const middle = { x: 1, y: 1 };
+    const sink = { x: 2, y: 1 };
+    const tail = { x: 3, y: 1 };
+
+    map.place("belt", source);
+
+    const firstHop = map.transfer(source, middle);
+    expect(firstHop).toMatchObject({
+      success: true,
+      ok: true,
+      from: source,
+      to: middle,
+    });
+
+    const blockedSameTick = map.transfer(middle, sink);
+    expect(blockedSameTick).toMatchObject({
+      success: false,
+      ok: false,
+      reason: "occupied-destination",
+      from: middle,
       to: sink,
     });
 
     expect(map.hasEntityAt(source)).toBe(false);
     expect(map.hasEntityAt(middle)).toBe(true);
     expect(map.hasEntityAt(sink)).toBe(false);
+
+    await Promise.resolve();
 
     const deferredRelay = map.transfer(middle, sink);
     expect(deferredRelay).toMatchObject({
@@ -395,9 +461,32 @@ describe("map transfer operations", () => {
       to: sink,
     });
 
+    const blockedRelayChain = map.transfer(sink, tail);
+    expect(blockedRelayChain).toMatchObject({
+      success: false,
+      ok: false,
+      reason: "occupied-destination",
+      from: sink,
+      to: tail,
+    });
+
     expect(map.hasEntityAt(source)).toBe(false);
     expect(map.hasEntityAt(middle)).toBe(false);
     expect(map.hasEntityAt(sink)).toBe(true);
+    expect(map.hasEntityAt(tail)).toBe(false);
+
+    await Promise.resolve();
+
+    const nextTickRelay = map.transfer(sink, tail);
+    expect(nextTickRelay).toMatchObject({
+      success: true,
+      ok: true,
+      from: sink,
+      to: tail,
+    });
+
+    expect(map.hasEntityAt(sink)).toBe(false);
+    expect(map.hasEntityAt(tail)).toBe(true);
   });
 
   it("selects a stable winner for same-destination contention based on source order", () => {
