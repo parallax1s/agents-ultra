@@ -2,7 +2,7 @@
   "private": true,
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "node scripts/ensure-vitest-or-skip.mjs",
     "test:e2e": "node scripts/ensure-playwright-or-skip.mjs",
