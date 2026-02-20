@@ -91,6 +91,9 @@ export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
   const entitiesById = new Map<string, EntityBase>();
   const entitiesByCell = new Map<string, Set<string>>();
   const cellKeyById = new Map<string, string>();
+  const publicEntitiesById = new Map<string, EntityBase>();
+  const publicEntitiesByCell = new Map<string, Set<string>>();
+  const publicCellKeyById = new Map<string, string>();
 
   let nextEntityId = 1;
   let accumulatorMs = 0;
@@ -99,51 +102,172 @@ export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
   let tick = 0;
   let tickCount = 0;
   let elapsedMs = 0;
+  let runningStep = false;
 
-  const removeFromIndexedCell = (id: string): void => {
-    const previousKey = cellKeyById.get(id);
+  type CellIndex = {
+    readonly entitiesByCell: Map<string, Set<string>>;
+    readonly cellKeyById: Map<string, string>;
+  };
+
+  const isPlainObject = (value: unknown): value is Record<string, unknown> => {
+    if (typeof value !== "object" || value === null) {
+      return false;
+    }
+
+    const proto = Object.getPrototypeOf(value);
+    return proto === Object.prototype || proto === null;
+  };
+
+  const cloneSnapshotValue = (value: unknown): unknown => {
+    if (Array.isArray(value)) {
+      return value.map((entry) => cloneSnapshotValue(entry));
+    }
+
+    if (!isPlainObject(value)) {
+      return value;
+    }
+
+    const clone: Record<string, unknown> = {};
+    for (const key of Object.keys(value)) {
+      clone[key] = cloneSnapshotValue((value as Record<string, unknown>)[key]);
+    }
+
+    return clone;
+  };
+
+  const cloneEntityForPublic = (entity: EntityBase): EntityBase => {
+    return {
+      id: entity.id,
+      kind: entity.kind,
+      pos: { x: entity.pos.x, y: entity.pos.y },
+      rot: entity.rot,
+      state: cloneSnapshotValue(entity.state),
+    };
+  };
+
+  const removeFromIndexedCell = (id: string, index: CellIndex): void => {
+    const previousKey = index.cellKeyById.get(id);
     if (previousKey === undefined) {
       return;
     }
 
-    cellKeyById.delete(id);
-    const cellIds = entitiesByCell.get(previousKey);
+    index.cellKeyById.delete(id);
+    const cellIds = index.entitiesByCell.get(previousKey);
     if (cellIds === undefined) {
       return;
     }
 
     cellIds.delete(id);
     if (cellIds.size === 0) {
-      entitiesByCell.delete(previousKey);
+      index.entitiesByCell.delete(previousKey);
     }
   };
 
-  const indexInCell = (id: string, pos: GridCoord): void => {
+  const indexInCell = (id: string, pos: GridCoord, index: CellIndex): void => {
     const nextKey = toCellKey(pos);
-    const previousKey = cellKeyById.get(id);
+    const previousKey = index.cellKeyById.get(id);
 
     if (previousKey === nextKey) {
       return;
     }
 
     if (previousKey !== undefined) {
-      const previousCellIds = entitiesByCell.get(previousKey);
+      const previousCellIds = index.entitiesByCell.get(previousKey);
       if (previousCellIds !== undefined) {
         previousCellIds.delete(id);
         if (previousCellIds.size === 0) {
-          entitiesByCell.delete(previousKey);
+          index.entitiesByCell.delete(previousKey);
         }
       }
     }
 
-    let cellIds = entitiesByCell.get(nextKey);
+    let cellIds = index.entitiesByCell.get(nextKey);
     if (cellIds === undefined) {
       cellIds = new Set<string>();
-      entitiesByCell.set(nextKey, cellIds);
+      index.entitiesByCell.set(nextKey, cellIds);
     }
 
     cellIds.add(id);
-    cellKeyById.set(id, nextKey);
+    index.cellKeyById.set(id, nextKey);
+  };
+
+  const getInternalEntityById = (id: string): EntityBase | undefined => {
+    return entitiesById.get(id);
+  };
+
+  const getInternalEntitiesAt = (pos: GridCoord): EntityBase[] => {
+    if (isOutOfBounds(pos, worldWidth, worldHeight)) {
+      return [];
+    }
+
+    const cellIds = entitiesByCell.get(toCellKey(pos));
+    if (cellIds === undefined) {
+      return [];
+    }
+
+    const entities: EntityBase[] = [];
+    for (const id of cellIds) {
+      const entity = entitiesById.get(id);
+      if (entity !== undefined) {
+        entities.push(entity);
+      }
+    }
+
+    return entities;
+  };
+
+  const getInternalAllEntities = (): EntityBase[] => {
+    return Array.from(entitiesById.values());
+  };
+
+  const publishPublicState = (): void => {
+    publicEntitiesById.clear();
+    publicEntitiesByCell.clear();
+    publicCellKeyById.clear();
+
+    for (const entity of entitiesById.values()) {
+      const publicEntity = cloneEntityForPublic(entity);
+      publicEntitiesById.set(publicEntity.id, publicEntity);
+      indexInCell(publicEntity.id, publicEntity.pos, {
+        entitiesByCell: publicEntitiesByCell,
+        cellKeyById: publicCellKeyById,
+      });
+    }
+  };
+
+  const publishAfterMutation = (): void => {
+    if (!runningStep) {
+      publishPublicState();
+    }
+  };
+
+  const getEntityById = (id: string): EntityBase | undefined => {
+    return getInternalEntityById(id);
+  };
+
+  const getEntitiesAt = (pos: GridCoord): EntityBase[] => {
+    if (isOutOfBounds(pos, worldWidth, worldHeight)) {
+      return [];
+    }
+
+    const cellIds = publicEntitiesByCell.get(toCellKey(pos));
+    if (cellIds === undefined) {
+      return [];
+    }
+
+    const entities: EntityBase[] = [];
+    for (const id of cellIds) {
+      const entity = publicEntitiesById.get(id);
+      if (entity !== undefined) {
+        entities.push(entity);
+      }
+    }
+
+    return entities;
+  };
+
+  const getAllEntities = (): EntityBase[] => {
+    return Array.from(publicEntitiesById.values());
   };
 
   const addEntity = (
@@ -181,7 +305,11 @@ export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
     } as EntityBase;
 
     entitiesById.set(id, entity);
-    indexInCell(id, entity.pos);
+    indexInCell(id, entity.pos, {
+      entitiesByCell,
+      cellKeyById,
+    });
+    publishAfterMutation();
 
     return id;
   };
@@ -192,71 +320,62 @@ export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
       return false;
     }
 
-    removeFromIndexedCell(id);
+    removeFromIndexedCell(id, {
+      entitiesByCell,
+      cellKeyById,
+    });
+    publishAfterMutation();
     return true;
   };
 
-  const getEntityById = (id: string): EntityBase | undefined => {
-    return entitiesById.get(id);
-  };
-
-  const getEntitiesAt = (pos: GridCoord): EntityBase[] => {
-    if (isOutOfBounds(pos, worldWidth, worldHeight)) {
-      return [];
-    }
-
-    const cellIds = entitiesByCell.get(toCellKey(pos));
-    if (cellIds === undefined) {
-      return [];
-    }
-
-    const entities: EntityBase[] = [];
-    for (const id of cellIds) {
-      const entity = entitiesById.get(id);
-      if (entity !== undefined) {
-        entities.push(entity);
-      }
-    }
-
-    return entities;
-  };
-
-  const getAllEntities = (): EntityBase[] => {
-    return Array.from(entitiesById.values());
-  };
-
   const runTick = (): void => {
-    const ids = Array.from(entitiesById.keys());
+    runningStep = true;
+    try {
+      const ids = Array.from(entitiesById.keys());
+      const updateContext = {
+        width: worldWidth,
+        height: worldHeight,
+        getEntitiesAt: getInternalEntitiesAt,
+        getEntityById: getInternalEntityById,
+        getAllEntities: getInternalAllEntities,
+      };
 
-    for (const id of ids) {
-      const entity = entitiesById.get(id);
-      if (entity === undefined) {
-        continue;
+      for (const id of ids) {
+        const entity = entitiesById.get(id);
+        if (entity === undefined) {
+          continue;
+        }
+
+        const definition = getDefinition(entity.kind);
+        if (definition === undefined) {
+          throw new Error(`Unknown entity kind: ${String(entity.kind)}`);
+        }
+
+        if (typeof definition.update !== "function") {
+          continue;
+        }
+
+        const previousPos = { x: entity.pos.x, y: entity.pos.y };
+        definition.update(entity, TICK_MS, updateContext);
+
+        if (
+          entitiesById.has(id) &&
+          (previousPos.x !== entity.pos.x || previousPos.y !== entity.pos.y)
+        ) {
+          indexInCell(id, entity.pos, {
+            entitiesByCell,
+            cellKeyById,
+          });
+        }
       }
 
-      const definition = getDefinition(entity.kind);
-      if (definition === undefined) {
-        throw new Error(`Unknown entity kind: ${String(entity.kind)}`);
-      }
-
-      if (typeof definition.update !== "function") {
-        continue;
-      }
-
-      const previousPos = { x: entity.pos.x, y: entity.pos.y };
-      definition.update(entity, TICK_MS, sim);
-
-      if (
-        entitiesById.has(id) &&
-        (previousPos.x !== entity.pos.x || previousPos.y !== entity.pos.y)
-      ) {
-        indexInCell(id, entity.pos);
-      }
+      tick += 1;
+      tickCount += 1;
+      elapsedMs += TICK_MS;
+      publishPublicState();
+    } finally {
+      runningStep = false;
     }
-
-    tick += 1;
-    tickCount += 1;
-    elapsedMs += TICK_MS;
   };
 
   const step = (dtMs: number): void => {
