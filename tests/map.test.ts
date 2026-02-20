@@ -352,6 +352,54 @@ describe("placement controller validation", () => {
 });
 
 describe("map transfer operations", () => {
+  it("defers chain relay so middle cannot forward on the tick it receives an item", () => {
+    const map = createMap(3, 3, 123);
+
+    const source = { x: 0, y: 1 };
+    const middle = { x: 1, y: 1 };
+    const sink = { x: 2, y: 1 };
+
+    map.place("belt", source);
+
+    const outcomes = map.transferMany([
+      { from: source, to: middle },
+      { from: middle, to: sink },
+    ]);
+
+    expect(outcomes).toHaveLength(2);
+
+    expect(outcomes[0]).toMatchObject({
+      success: true,
+      ok: true,
+      from: source,
+      to: middle,
+    });
+
+    expect(outcomes[1]).toMatchObject({
+      success: false,
+      ok: false,
+      reason: "empty-source",
+      from: middle,
+      to: sink,
+    });
+
+    expect(map.hasEntityAt(source)).toBe(false);
+    expect(map.hasEntityAt(middle)).toBe(true);
+    expect(map.hasEntityAt(sink)).toBe(false);
+
+    const deferredRelay = map.transfer(middle, sink);
+    expect(deferredRelay).toMatchObject({
+      success: true,
+      ok: true,
+      from: middle,
+      to: sink,
+    });
+
+    expect(map.hasEntityAt(source)).toBe(false);
+    expect(map.hasEntityAt(middle)).toBe(false);
+    expect(map.hasEntityAt(sink)).toBe(true);
+  });
+
   it("selects a stable winner for same-destination contention based on source order", () => {
     const runTransferContest = (requests: { from: { x: number; y: number }; to: { x: number; y: number } }[]) => {
       const map = createMap(6, 6, 123);
