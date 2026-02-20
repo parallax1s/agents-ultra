@@ -287,6 +287,13 @@ const waitForEntityCount = async (page: Page, count: number): Promise<void> => {
     .toBe(count);
 };
 
+const expectActiveSelection = async (page: Page, expected: string): Promise<void> => {
+  for (const label of PALETTE) {
+    const button = page.getByRole("button", { name: label });
+    await expect(button).toHaveAttribute("data-active", label === expected ? "true" : "false");
+  }
+};
+
 const expectTickCountToIncrease = async (page: Page, expected: number): Promise<void> => {
   await expect
     .poll(async () => {
@@ -310,10 +317,21 @@ test.describe("Agents Ultra app smoke", () => {
 
     const miner = page.getByRole("button", { name: "Miner" });
     const belt = page.getByRole("button", { name: "Belt" });
+    const inserter = page.getByRole("button", { name: "Inserter" });
+    const furnace = page.getByRole("button", { name: "Furnace" });
 
-    await expect(miner).toHaveAttribute("data-active", "true");
+    await expectActiveSelection(page, "Miner");
+    await page.keyboard.press("Digit1");
+    await expectActiveSelection(page, "Miner");
     await page.keyboard.press("Digit2");
-    await expect(belt).toHaveAttribute("data-active", "true");
+    await expectActiveSelection(page, "Belt");
+    await page.keyboard.press("Digit3");
+    await expectActiveSelection(page, "Inserter");
+    await page.keyboard.press("Digit4");
+    await expectActiveSelection(page, "Furnace");
+    await page.keyboard.press("Digit2");
+    await expectActiveSelection(page, "Belt");
+
     await page.keyboard.press("KeyR");
     await page.waitForFunction(() => {
       const sim = (window as { __SIM__?: { tick?: number } }).__SIM__;
@@ -347,16 +365,26 @@ test.describe("Agents Ultra app smoke", () => {
 
     const runningTick = (await readSimSnapshot(page)).tickCount;
     await expectTickCountToIncrease(page, runningTick);
-    const pausedTick = (await readSimSnapshot(page)).tickCount;
+    const prePauseTick = (await readSimSnapshot(page)).tickCount;
     await page.keyboard.press("Space");
-    await expect
-      .poll(async () => {
-        const pausedState = await readSimSnapshot(page);
-        return pausedState.tickCount;
-      })
-      .toBeLessThanOrEqual(pausedTick + 1);
+    const pausedTick = (await readSimSnapshot(page)).tickCount;
+    await page.waitForTimeout(250);
+    const frozenTick = (await readSimSnapshot(page)).tickCount;
+    expect(frozenTick).toBeLessThanOrEqual(pausedTick + 1);
+    await page.waitForTimeout(250);
+    const stillFrozenTick = (await readSimSnapshot(page)).tickCount;
+    expect(stillFrozenTick).toBe(frozenTick);
 
     await page.keyboard.press("Space");
-    await expectTickCountToIncrease(page, pausedTick);
+    expect(prePauseTick).toBeGreaterThan(0);
+    await expectTickCountToIncrease(page, frozenTick);
+
+    const resumedTick = (await readSimSnapshot(page)).tickCount;
+    expect(resumedTick).toBeGreaterThan(frozenTick);
+
+    await expect(miner).toHaveAttribute("aria-pressed", "false");
+    await expect(belt).toHaveAttribute("aria-pressed", "true");
+    await expect(inserter).toHaveAttribute("aria-pressed", "false");
+    await expect(furnace).toHaveAttribute("aria-pressed", "false");
   });
 });
