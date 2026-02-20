@@ -4,19 +4,13 @@ import {
   getDefinition,
 } from "../core/registry";
 import { sortByGridEntityOrder } from "../core/map";
+import { DIRECTION_VECTORS, OPPOSITE_DIRECTION } from "../core/types";
 import type { Direction, EntityBase, GridCoord, ItemKind } from "../core/types";
 import { Furnace, FURNACE_TYPE } from "./furnace";
 
 const MINER_CADENCE_TICKS = 60;
 const BELT_TRANSFER_CADENCE_TICKS = 15;
 const INSERTER_CADENCE_TICKS = 20;
-
-const DIR_VECTORS: Readonly<Record<Direction, GridCoord>> = {
-  N: { x: 0, y: -1 },
-  E: { x: 1, y: 0 },
-  S: { x: 0, y: 1 },
-  W: { x: -1, y: 0 },
-};
 
 type CanonicalTickKind = "miner" | "belt" | "inserter" | "furnace";
 
@@ -179,15 +173,12 @@ const isProvideItemHost = (value: unknown): value is ProvideItemHost => {
 };
 
 const move = (pos: GridCoord, dir: Direction): GridCoord => {
-  const delta = DIR_VECTORS[dir];
+  const delta = DIRECTION_VECTORS[dir];
   return { x: pos.x + delta.x, y: pos.y + delta.y };
 };
 
 const opposite = (dir: Direction): Direction => {
-  if (dir === "N") return "S";
-  if (dir === "S") return "N";
-  if (dir === "E") return "W";
-  return "E";
+  return OPPOSITE_DIRECTION[dir];
 };
 
 const directionFromTo = (from: GridCoord, to: GridCoord): Direction | undefined => {

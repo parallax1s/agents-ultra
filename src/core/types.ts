@@ -9,6 +9,20 @@ export type Direction = 'N' | 'E' | 'S' | 'W';
 
 export const DIRECTION_SEQUENCE = ["N", "E", "S", "W"] as const;
 
+export const DIRECTION_VECTORS: Readonly<Record<Direction, GridCoord>> = {
+  N: { x: 0, y: -1 },
+  E: { x: 1, y: 0 },
+  S: { x: 0, y: 1 },
+  W: { x: -1, y: 0 },
+};
+
+export const OPPOSITE_DIRECTION: Readonly<Record<Direction, Direction>> = {
+  N: "S",
+  E: "W",
+  S: "N",
+  W: "E",
+};
+
 export const rotateDirection = (direction: Direction, steps = 1): Direction => {
   const directionIndex: Record<Direction, number> = {
     N: 0,

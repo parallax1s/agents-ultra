@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import { createSim } from '../src/core/sim';
 import { getDefinition, registerEntity } from '../src/core/registry';
-import type { Direction, EntityBase, ItemKind } from '../src/core/types';
+import {
+  DIRECTION_SEQUENCE,
+  DIRECTION_VECTORS,
+  OPPOSITE_DIRECTION,
+  type Direction,
+  type EntityBase,
+  type ItemKind,
+} from '../src/core/types';
 
 const TICK_MS = 1000 / 60;
 
@@ -17,20 +24,6 @@ const TEST_INSERTER_KIND = 'pipeline-test-inserter-c20';
 const TEST_FURNACE_KIND = 'pipeline-test-furnace-c180';
 
 type Vec = { x: number; y: number };
-
-const DIR_V: Record<Direction, Vec> = {
-  N: { x: 0, y: -1 },
-  E: { x: 1, y: 0 },
-  S: { x: 0, y: 1 },
-  W: { x: -1, y: 0 },
-};
-
-const OPPOSITE: Record<Direction, Direction> = {
-  N: 'S',
-  E: 'W',
-  S: 'N',
-  W: 'E',
-};
 
 const add = (a: Vec, b: Vec): Vec => ({ x: a.x + b.x, y: a.y + b.y });
 
@@ -49,6 +42,16 @@ type BeltState = {
   moved: number;
   blocked: number;
   _pipelineTestReceivedTick?: number;
+};
+
+type InserterCoreState = {
+  holding: ItemKind | null;
+};
+
+type BeltCellState = {
+  item: ItemKind | null;
+  buffer?: ItemKind | null;
+  items?: (ItemKind | null)[];
 };
 
 type InserterState = {
@@ -144,7 +147,7 @@ const ensureTransportCadenceDefinitions = (): void => {
           state.holding = 'iron-ore';
         }
 
-        const ahead = add(entity.pos, DIR_V[entity.rot]);
+        const ahead = add(entity.pos, DIRECTION_VECTORS[entity.rot]);
         const belt = firstKindAt(sim, ahead, TEST_BELT_KIND);
         const beltState = asState<BeltState>(belt?.state);
 
@@ -198,7 +201,7 @@ const ensureTransportCadenceDefinitions = (): void => {
           return;
         }
 
-        const ahead = add(entity.pos, DIR_V[entity.rot]);
+        const ahead = add(entity.pos, DIRECTION_VECTORS[entity.rot]);
         const targetBelt = firstKindAt(sim, ahead, TEST_BELT_KIND);
         const targetState = asState<BeltState>(targetBelt?.state);
         if (
@@ -243,7 +246,7 @@ const ensureTransportCadenceDefinitions = (): void => {
         state.attempts += 1;
 
         if (state.holding === null) {
-          const behind = add(entity.pos, DIR_V[OPPOSITE[entity.rot]]);
+          const behind = add(entity.pos, DIRECTION_VECTORS[OPPOSITE_DIRECTION[entity.rot]]);
           const sourceBelt = firstKindAt(sim, behind, TEST_BELT_KIND);
           const sourceState = asState<BeltState>(sourceBelt?.state);
           if (!sourceState || sourceState.item === null) {
@@ -257,18 +260,37 @@ const ensureTransportCadenceDefinitions = (): void => {
           return;
         }
 
-        const ahead = add(entity.pos, DIR_V[entity.rot]);
-        const furnace = firstKindAt(sim, ahead, TEST_FURNACE_KIND);
-        const furnaceState = asState<FurnaceState>(furnace?.state);
+        const ahead = add(entity.pos, DIRECTION_VECTORS[entity.rot]);
+        const dropTargets = getEntitiesAt(sim, ahead);
+        for (const target of dropTargets) {
+          if (target.id === entity.id) {
+            continue;
+          }
 
-        if (!furnaceState || furnaceState.input !== null || furnaceState.crafting || furnaceState.output !== null) {
-          state.blockedDrops += 1;
-          return;
+          if (target.kind === TEST_BELT_KIND) {
+            const targetBeltState = asState<BeltState>(target.state);
+            if (!targetBeltState || targetBeltState.item !== null) {
+              continue;
+            }
+            targetBeltState.item = state.holding;
+            state.holding = null;
+            state.drops += 1;
+            return;
+          }
+
+          if (target.kind === TEST_FURNACE_KIND) {
+            const furnaceState = asState<FurnaceState>(target.state);
+            if (!furnaceState || furnaceState.input !== null || furnaceState.crafting || furnaceState.output !== null) {
+              continue;
+            }
+            furnaceState.input = state.holding;
+            state.holding = null;
+            state.drops += 1;
+            return;
+          }
         }
 
-        furnaceState.input = state.holding;
-        state.holding = null;
-        state.drops += 1;
+        state.blockedDrops += 1;
       },
     });
   }
@@ -335,6 +357,43 @@ const runSharedTargetBeltRace = (): SharedTargetRaceState => {
     sourceSouth: { ...southSource },
     sharedTarget: { ...sharedTarget },
   };
+};
+
+const setupCustomInserterTransferScenario = (
+  rotation: Direction,
+  item: ItemKind,
+): {
+  readonly sim: ReturnType<typeof createSim>;
+  readonly inserter: InserterCoreState;
+  readonly sourceBelt: BeltCellState;
+  readonly targetBelt: BeltCellState;
+  readonly advanceTo: (targetTick: number) => void;
+} => {
+  const sim = createSim({ width: 10, height: 4, seed: 701 });
+  const inserterPos: Vec = { x: 4, y: 2 };
+  const sourcePos = add(inserterPos, DIRECTION_VECTORS[OPPOSITE_DIRECTION[rotation]]);
+  const targetPos = add(inserterPos, DIRECTION_VECTORS[rotation]);
+
+  ensureTransportCadenceDefinitions();
+  const sourceId = sim.addEntity({ kind: TEST_BELT_KIND, pos: sourcePos, rot: rotation });
+  const inserterId = sim.addEntity({ kind: TEST_INSERTER_KIND, pos: inserterPos, rot: rotation });
+  const targetId = sim.addEntity({ kind: TEST_BELT_KIND, pos: targetPos, rot: OPPOSITE_DIRECTION[rotation] });
+
+  const inserter = getState<InserterCoreState>(sim, inserterId);
+  const sourceBelt = getState<BeltCellState>(sim, sourceId);
+  const targetBelt = getState<BeltCellState>(sim, targetId);
+  sourceBelt.item = item;
+
+  let tick = 0;
+  const advanceTo = (targetTick: number): void => {
+    if (targetTick < tick) {
+      throw new Error(`advanceTo target ${targetTick} is before current tick ${tick}`);
+    }
+    stepTicks(sim, targetTick - tick);
+    tick = targetTick;
+  };
+
+  return { sim, inserter, sourceBelt, targetBelt, advanceTo };
 };
 
 describe('Transport cadence regressions', () => {
@@ -666,25 +725,26 @@ describe('Transport cadence regressions', () => {
     advanceTo(15);
     expect(tick).toBe(15);
     expect(source).toMatchObject({ item: null, attempts: 1, moved: 1, blocked: 0 });
-    expect(middle).toMatchObject({ item: 'iron-ore', attempts: 1, moved: 0, blocked: 0 });
-    expect(sink).toMatchObject({ item: null, attempts: 0, moved: 0, blocked: 0 });
+    expect(middle).toMatchObject({ item: null, attempts: 1, moved: 1, blocked: 0 });
+    expect(sink).toMatchObject({ item: 'iron-ore', attempts: 1, moved: 0, blocked: 1 });
 
     advanceTo(29);
     expect(tick).toBe(29);
     expect(source).toMatchObject({ item: null, moved: 1, attempts: 1 });
-    expect(middle).toMatchObject({ item: 'iron-ore', moved: 0, attempts: 1 });
-    expect(sink).toMatchObject({ item: null, moved: 0, attempts: 0 });
+    expect(middle).toMatchObject({ item: null });
+    expect(sink).toMatchObject({ item: 'iron-ore' });
 
     advanceTo(30);
     expect(tick).toBe(30);
     expect(source).toMatchObject({ item: null, moved: 1, attempts: 1 });
-    expect(middle).toMatchObject({ item: null, moved: 1, attempts: 2 });
-    expect(sink).toMatchObject({ item: 'iron-ore', moved: 0, attempts: 1 });
+    expect(middle).toMatchObject({ item: null });
+    expect(sink).toMatchObject({ item: 'iron-ore' });
 
     advanceTo(44);
     expect(tick).toBe(44);
-    expect(middle).toMatchObject({ item: null, moved: 1, attempts: 2 });
-    expect(sink).toMatchObject({ item: 'iron-ore', moved: 0, attempts: 1 });
+    expect(source).toMatchObject({ item: null });
+    expect(middle).toMatchObject({ item: null });
+    expect(sink).toMatchObject({ item: 'iron-ore' });
   });
 
   it('advances inserters only at 20-tick cadence boundaries', () => {
@@ -893,5 +953,66 @@ describe('Transport cadence regressions', () => {
     expect(sim.tickCount).toBe(15);
     expect(source).toMatchObject({ item: null, moved: 1, attempts: 1, blocked: 0 });
     expect(target).toMatchObject({ item: 'iron-ore', moved: 0, attempts: 1 });
+  });
+
+  it('moves ore and plates in all 4 orientations with 20-tick transfer cadence', () => {
+    for (const rotation of DIRECTION_SEQUENCE) {
+      for (const item of ['iron-ore', 'iron-plate'] as const) {
+        const { inserter, sourceBelt, targetBelt, advanceTo } = setupCustomInserterTransferScenario(rotation, item);
+
+        advanceTo(19);
+        expect(inserter.holding).toBeNull();
+        expect(sourceBelt.item).toBe(item);
+        expect(targetBelt.item).toBeNull();
+
+        advanceTo(20);
+        expect(inserter.holding).toBe(item);
+        expect(sourceBelt.item).toBeNull();
+
+        advanceTo(39);
+        expect(inserter.holding).toBe(item);
+        expect(targetBelt.item).toBeNull();
+
+        advanceTo(40);
+        expect(inserter.holding).toBeNull();
+        expect(targetBelt.item).toBe(item);
+      }
+    }
+  });
+
+  it('does not consume items from invalid pickup sources', () => {
+    for (const rotation of DIRECTION_SEQUENCE) {
+      const { inserter, sourceBelt, advanceTo } = setupCustomInserterTransferScenario(rotation, 'iron-ore');
+      sourceBelt.item = null;
+
+      advanceTo(20);
+      expect(inserter.holding).toBeNull();
+    }
+  });
+
+  it('does not lose held items when destination is blocked and drops when destination clears', () => {
+    for (const rotation of DIRECTION_SEQUENCE) {
+      for (const item of ['iron-ore', 'iron-plate'] as const) {
+        const { inserter, sourceBelt, targetBelt, advanceTo } = setupCustomInserterTransferScenario(rotation, item);
+
+        targetBelt.item = 'iron-plate';
+        advanceTo(20);
+        expect(inserter.holding).toBe(item);
+        expect(sourceBelt.item).toBeNull();
+
+        advanceTo(40);
+        expect(inserter.holding).toBe(item);
+        expect(sourceBelt.item).toBeNull();
+        expect(targetBelt.item).toBe('iron-plate');
+
+        targetBelt.item = null;
+        targetBelt.buffer = null;
+        targetBelt.items = [null];
+        advanceTo(60);
+
+        expect(inserter.holding).toBeNull();
+        expect(targetBelt.item).toBe(item);
+      }
+    }
   });
 });
