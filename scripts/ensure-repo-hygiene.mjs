@@ -90,4 +90,18 @@ if (trackedNodeModules.length > 0 || transportConflictMarkers.length > 0) {
   process.exit(1);
 }
 
+const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const movementRegressionResult = spawnSync(npmCommand, ['run', 'test:movement'], {
+  stdio: 'inherit',
+});
+
+if (movementRegressionResult.error) {
+  throw movementRegressionResult.error;
+}
+
+if (movementRegressionResult.status !== 0) {
+  console.error('Repository hygiene failed: movement regression gate failed.');
+  process.exit(typeof movementRegressionResult.status === 'number' ? movementRegressionResult.status : 1);
+}
+
 console.log('Repository hygiene check passed.');
