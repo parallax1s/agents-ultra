@@ -47,7 +47,38 @@ type CandidateTile = {
   reason: string;
 };
 
+type TransportLayout = {
+  found: boolean;
+  miner: {
+    tileX: number;
+    tileY: number;
+  };
+  beltOne: {
+    tileX: number;
+    tileY: number;
+  };
+  beltTwo: {
+    tileX: number;
+    tileY: number;
+  };
+  inserter: {
+    tileX: number;
+    tileY: number;
+  };
+  furnace: {
+    tileX: number;
+    tileY: number;
+  };
+  reason: string;
+};
+
 const PALETTE = ["Miner", "Belt", "Inserter", "Furnace"] as const;
+const MAX_TICK_DELTA_PER_SAMPLE = 5;
+const CANDIDATE_TILE_PADDING = 4;
+const TRANSPORT_SAMPLE_DELAY_MS = 70;
+const TRANSPORT_SAMPLE_COUNT = 54;
+const TRANSPORT_MIN_WINDOWS = 4;
+const TRANSPORT_CADENCE_TICKS = 15;
 
 const waitForAppReady = async (page: Page): Promise<void> => {
   await page.setViewportSize({ width: 960, height: 640 });
@@ -308,6 +339,52 @@ const expectActiveSelection = async (page: Page, expected: string): Promise<void
   }
 };
 
+const rotateToDirection = async (page: Page, expected: "N" | "E" | "S" | "W"): Promise<void> => {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const rotationValue = page.getByTestId("hud-rotation-value");
+    const current = await rotationValue.getAttribute("data-value");
+    if (current === expected) {
+      return;
+    }
+    await page.keyboard.press("KeyR");
+    await page.waitForTimeout(8);
+  }
+
+  throw new Error(`Unable to rotate selection to ${expected} after repeated key presses`);
+};
+
+const expectSteadyCadence = (
+  samples: readonly TickSample[],
+  cadenceTicks: number = TRANSPORT_CADENCE_TICKS,
+  minWindows: number = TRANSPORT_MIN_WINDOWS,
+): void => {
+  expect(samples.length).toBeGreaterThan(1);
+  expect(minWindows).toBeGreaterThan(0);
+
+  const observedWindows = new Set<number>();
+  let previousWindow = Math.floor(samples[0]?.tickCount ? samples[0].tickCount / cadenceTicks : 0);
+  observedWindows.add(previousWindow);
+
+  for (let index = 1; index < samples.length; index += 1) {
+    const previous = samples[index - 1];
+    const current = samples[index];
+    if (previous === undefined || current === undefined) {
+      continue;
+    }
+
+    expect(current.tickCount).toBeGreaterThanOrEqual(previous.tickCount);
+    const delta = current.tickCount - previous.tickCount;
+    expect(delta).toBeLessThanOrEqual(MAX_TICK_DELTA_PER_SAMPLE);
+    const currentWindow = Math.floor(current.tickCount / cadenceTicks);
+    observedWindows.add(currentWindow);
+    expect(currentWindow).toBeGreaterThanOrEqual(previousWindow);
+    expect(currentWindow - previousWindow).toBeLessThanOrEqual(1);
+    previousWindow = currentWindow;
+  }
+
+  expect(observedWindows.size).toBeGreaterThanOrEqual(minWindows);
+};
+
 const expectTickCountToIncrease = async (page: Page, expected: number): Promise<void> => {
   await expect
     .poll(async () => {
@@ -407,6 +484,192 @@ const expectTickCadence = (samples: readonly TickSample[]): void => {
   expect(observedForwardMovement).toBeTruthy();
 };
 
+const findTransportLayout = async (page: Page): Promise<TransportLayout> => {
+  const layout = await page.evaluate(
+    ({ candidateTilePadding }) => {
+      type TransportSimulation = {
+        width?: unknown;
+        height?: unknown;
+        canPlace?: (entityKind: EntityKind, tile: { x: number; y: number }, rotation: number) => boolean;
+      };
+
+      const sim = (window as { __SIM__?: unknown }).__SIM__;
+      if (!sim || typeof sim !== "object") {
+        return {
+          found: false,
+          miner: { tileX: 0, tileY: 0 },
+          beltOne: { tileX: 0, tileY: 0 },
+          beltTwo: { tileX: 0, tileY: 0 },
+          inserter: { tileX: 0, tileY: 0 },
+          furnace: { tileX: 0, tileY: 0 },
+          reason: "simulation not ready",
+        };
+      }
+
+      const runtime = sim as TransportSimulation;
+      const width =
+        typeof runtime.width === "number" && Number.isInteger(runtime.width) && runtime.width > candidateTilePadding
+          ? runtime.width
+          : 60;
+      const height =
+        typeof runtime.height === "number" && Number.isInteger(runtime.height) && runtime.height > 0
+          ? runtime.height
+          : 40;
+      if (typeof runtime.canPlace !== "function") {
+        return {
+          found: false,
+          miner: { tileX: 0, tileY: 0 },
+          beltOne: { tileX: 0, tileY: 0 },
+          beltTwo: { tileX: 0, tileY: 0 },
+          inserter: { tileX: 0, tileY: 0 },
+          furnace: { tileX: 0, tileY: 0 },
+          reason: "canPlace helper unavailable",
+        };
+      }
+
+      for (let tileY = 0; tileY < height; tileY += 1) {
+        for (let tileX = 0; tileX + candidateTilePadding < width; tileX += 1) {
+          const miner = { x: tileX, y: tileY };
+          const beltOne = { x: tileX + 1, y: tileY };
+          const beltTwo = { x: tileX + 2, y: tileY };
+          const inserter = { x: tileX + 3, y: tileY };
+          const furnace = { x: tileX + 4, y: tileY };
+
+          if (
+            !runtime.canPlace("Miner", miner, 1) ||
+            !runtime.canPlace("Belt", beltOne, 1) ||
+            !runtime.canPlace("Belt", beltTwo, 1) ||
+            !runtime.canPlace("Inserter", inserter, 1) ||
+            !runtime.canPlace("Furnace", furnace, 1)
+          ) {
+            continue;
+          }
+
+          return {
+            found: true,
+            miner: { tileX: miner.x, tileY: miner.y },
+            beltOne: { tileX: beltOne.x, tileY: beltOne.y },
+            beltTwo: { tileX: beltTwo.x, tileY: beltTwo.y },
+            inserter: { tileX: inserter.x, tileY: inserter.y },
+            furnace: { tileX: furnace.x, tileY: furnace.y },
+            reason: "",
+          };
+        }
+      }
+
+      return {
+        found: false,
+        miner: { tileX: 0, tileY: 0 },
+        beltOne: { tileX: 0, tileY: 0 },
+        beltTwo: { tileX: 0, tileY: 0 },
+        inserter: { tileX: 0, tileY: 0 },
+        furnace: { tileX: 0, tileY: 0 },
+        reason: "no valid transport lane found",
+      };
+    },
+    { candidateTilePadding: CANDIDATE_TILE_PADDING },
+  );
+
+  if (!layout.found) {
+    throw new Error(`Unable to find transport lane: ${layout.reason}`);
+  }
+
+  return layout;
+};
+
+const tileToCanvasPoint = async (page: Page, tileX: number, tileY: number): Promise<{ x: number; y: number }> => {
+  const point = await page.evaluate(
+    ({ tileX, tileY }) => {
+      type PlacementSimulation = {
+        width?: unknown;
+        height?: unknown;
+        tileSize?: unknown;
+      };
+
+      const canvas = document.querySelector("canvas");
+      if (!canvas) {
+        return { found: false, x: 0, y: 0, reason: "canvas not ready" };
+      }
+
+      const sim = (window as { __SIM__?: unknown }).__SIM__;
+      if (!sim || typeof sim !== "object") {
+        return { found: false, x: 0, y: 0, reason: "simulation not ready" };
+      }
+
+      const runtime = sim as PlacementSimulation;
+      const width =
+        typeof runtime.width === "number" && Number.isInteger(runtime.width) && runtime.width > 0 ? runtime.width : 60;
+      const height =
+        typeof runtime.height === "number" && Number.isInteger(runtime.height) && runtime.height > 0 ? runtime.height : 40;
+      const tileSize =
+        typeof runtime.tileSize === "number" && Number.isInteger(runtime.tileSize) && runtime.tileSize > 0
+          ? runtime.tileSize
+          : 32;
+      if (!Number.isInteger(tileX) || tileX < 0 || tileX >= width || !Number.isInteger(tileY) || tileY < 0 || tileY >= height) {
+        return { found: false, x: 0, y: 0, reason: "invalid tile" };
+      }
+
+      const rect = canvas.getBoundingClientRect();
+      const worldW = width * tileSize;
+      const worldH = height * tileSize;
+      const canvasWidth = canvas.width > 0 ? canvas.width : rect.width;
+      const canvasHeight = canvas.height > 0 ? canvas.height : rect.height;
+      const scale = Math.max(0.0001, Math.min(canvasWidth / worldW, canvasHeight / worldH));
+      const tileSpan = tileSize * scale;
+      const viewW = worldW * scale;
+      const viewH = worldH * scale;
+      const offsetX = Math.floor((canvasWidth - viewW) / 2);
+      const offsetY = Math.floor((canvasHeight - viewH) / 2);
+      const cx = offsetX + tileX * tileSpan + tileSpan / 2;
+      const cy = offsetY + tileY * tileSpan + tileSpan / 2;
+
+      if (cx < 0 || cy < 0 || cx >= rect.width || cy >= rect.height) {
+        return { found: false, x: 0, y: 0, reason: "tile outside viewport" };
+      }
+
+      return { found: true, x: Math.round(cx), y: Math.round(cy) };
+    },
+    { tileX, tileY },
+  );
+
+  if (!point.found) {
+    throw new Error(`Tile (${tileX}, ${tileY}) is not visible in canvas: ${point.reason}`);
+  }
+
+  return { x: point.x, y: point.y };
+};
+
+const placeEntityAt = async (page: Page, kind: EntityKind, tileX: number, tileY: number): Promise<void> => {
+  const hotkeyByKind: Readonly<Record<EntityKind, "Digit1" | "Digit2" | "Digit3" | "Digit4">> = {
+    Miner: "Digit1",
+    Belt: "Digit2",
+    Inserter: "Digit3",
+    Furnace: "Digit4",
+  };
+
+  const canvas = page.locator("canvas");
+  await page.keyboard.press(hotkeyByKind[kind]);
+  await expectActiveSelection(page, kind);
+  const point = await tileToCanvasPoint(page, tileX, tileY);
+  await canvas.click({ position: point });
+};
+
+const expectNoResumeJump = (
+  pausedSamples: readonly TickSample[],
+  resumedSamples: readonly TickSample[],
+  maxJump = MAX_TICK_DELTA_PER_SAMPLE,
+): void => {
+  const before = pausedSamples[pausedSamples.length - 1];
+  const first = resumedSamples[0];
+  if (before === undefined || first === undefined) {
+    return;
+  }
+
+  const jump = first.tickCount - before.tickCount;
+  expect(jump).toBeGreaterThanOrEqual(0);
+  expect(jump).toBeLessThanOrEqual(maxJump);
+};
+
 test.describe("Agents Ultra app smoke", () => {
   test("renders canvas and palette buttons", async ({ page }) => {
     await waitForAppReady(page);
@@ -493,5 +756,32 @@ test.describe("Agents Ultra app smoke", () => {
     await expect(belt).toHaveAttribute("aria-pressed", "true");
     await expect(inserter).toHaveAttribute("aria-pressed", "false");
     await expect(furnace).toHaveAttribute("aria-pressed", "false");
+  });
+
+  test("validates long transport cadence and pause/resume stability", async ({ page }) => {
+    await waitForAppReady(page);
+
+    await rotateToDirection(page, "E");
+    const layout = await findTransportLayout(page);
+
+    const baseline = await readSimSnapshot(page);
+    await placeEntityAt(page, "Miner", layout.miner.tileX, layout.miner.tileY);
+    await placeEntityAt(page, "Belt", layout.beltOne.tileX, layout.beltOne.tileY);
+    await placeEntityAt(page, "Belt", layout.beltTwo.tileX, layout.beltTwo.tileY);
+    await placeEntityAt(page, "Inserter", layout.inserter.tileX, layout.inserter.tileY);
+    await placeEntityAt(page, "Furnace", layout.furnace.tileX, layout.furnace.tileY);
+    await waitForEntityCount(page, baseline.entityCount + 5);
+
+    const runningSamples = await sampleTickSamples(page, TRANSPORT_SAMPLE_COUNT, TRANSPORT_SAMPLE_DELAY_MS);
+    expectSteadyCadence(runningSamples, TRANSPORT_CADENCE_TICKS, TRANSPORT_MIN_WINDOWS);
+
+    await page.keyboard.press("Space");
+    const pausedSamples = await sampleTickSamples(page, 12, 80);
+    expectSamplesNoProgress(pausedSamples);
+
+    await page.keyboard.press("Space");
+    const resumedSamples = await sampleTickSamples(page, TRANSPORT_SAMPLE_COUNT, TRANSPORT_SAMPLE_DELAY_MS);
+    expectSteadyCadence(resumedSamples, TRANSPORT_CADENCE_TICKS, TRANSPORT_MIN_WINDOWS);
+    expectNoResumeJump(pausedSamples, resumedSamples, 1);
   });
 });
