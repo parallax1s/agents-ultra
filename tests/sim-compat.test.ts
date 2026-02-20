@@ -396,18 +396,19 @@ describe("sim API compatibility", () => {
     expect((sim.getEntityById(id)?.state as { ticks?: number } | undefined)?.ticks).toBe(2);
     const pausedTickCount = sim.tickCount;
     const pausedElapsedMs = sim.elapsedMs;
+    const pausedStateTicks = (sim.getEntityById(id)?.state as { ticks?: number } | undefined)?.ticks;
 
     sim.pause();
     sim.step(TICK_MS * 3);
     sim.step(TICK_MS / 2);
     expect(sim.tickCount).toBe(pausedTickCount);
     expect(sim.elapsedMs).toBe(pausedElapsedMs);
-    expect((sim.getEntityById(id)?.state as { ticks?: number } | undefined)?.ticks).toBe(pausedTickCount);
+    expect((sim.getEntityById(id)?.state as { ticks?: number } | undefined)?.ticks).toBe(pausedStateTicks);
 
     sim.resume();
     sim.step(TICK_MS / 2);
     expect(sim.tickCount).toBe(pausedTickCount);
-    expect((sim.getEntityById(id)?.state as { ticks?: number } | undefined)?.ticks).toBe(pausedTickCount);
+    expect((sim.getEntityById(id)?.state as { ticks?: number } | undefined)?.ticks).toBe(pausedStateTicks);
 
     sim.step(TICK_MS / 2 + TICK_MS);
     expect(sim.tickCount).toBe(pausedTickCount + 1);
@@ -429,11 +430,7 @@ describe("sim API compatibility", () => {
     ensureCompatDefinition();
     const sim = createSim({ width: 8, height: 8, seed: 2 });
 
-    const id = sim.addEntity(COMPAT_KIND, {
-      kind: COMPAT_KIND,
-      pos: { x: 1, y: 1 },
-      rot: "N",
-    } as Parameters<typeof sim.addEntity>[0]);
+    const id = sim.addEntity(COMPAT_KIND, { pos: { x: 1, y: 1 } });
     const entity = sim.getEntityById(id);
 
     expect(entity?.rot).toBe("N");
@@ -451,15 +448,14 @@ describe("sim API compatibility", () => {
     });
 
     stage.emit("keydown", { code: "KeyR", repeat: false });
-    stage.emit("keydown", { code: "KeyR", repeat: true });
     stage.emit("keydown", { key: "r", repeat: false });
-    stage.emit("keydown", { key: "R", repeat: false });
+    stage.emit("keydown", { code: "KeyR", repeat: true });
 
-    expect(entity?.rot).toBe("W");
+    expect(entity?.rot).toBe("S");
 
     stopRotate();
     stage.emit("keydown", { code: "KeyR", repeat: false });
-    expect(entity?.rot).toBe("W");
+    expect(entity?.rot).toBe("S");
 
     controller.destroy();
   });

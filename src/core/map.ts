@@ -38,8 +38,6 @@ export type MapRemovalFailureResult = {
 
 export type MapRemovalResult = MapRemovalSuccessResult | MapRemovalFailureResult;
 
-import type { GridCoord } from "./types";
-
 export interface GeneratedMap {
   width: number;
   height: number;
