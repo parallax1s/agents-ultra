@@ -4,8 +4,18 @@ import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 
 const localPlaywrightBinary = resolve(process.cwd(), "node_modules/.bin/playwright");
+const strictMode =
+  process.argv.includes("--strict") ||
+  process.env.REQUIRE_PLAYWRIGHT_E2E === "1" ||
+  process.env.REQUIRE_PLAYWRIGHT_E2E === "true";
 
 if (!existsSync(localPlaywrightBinary)) {
+  if (strictMode) {
+    console.error("Playwright is required but not installed locally.");
+    console.error("Install with: npm i -D @playwright/test && npx playwright install --with-deps");
+    process.exit(1);
+  }
+
   console.log("Playwright not installed locally; skipping e2e suite.");
   console.log("Install with: npm i -D @playwright/test && npx playwright install --with-deps");
   process.exit(0);
