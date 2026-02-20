@@ -1,8 +1,37 @@
-node_modules/
+# Runtime/runtime-like artifacts
+node_modules
+**/node_modules
+
+# Build outputs
 dist/
+**/dist/
+build/
+**/build/
 coverage/
+**/coverage/
 playwright-report/
+**/playwright-report/
 test-results/
+**/test-results/
+out/
+**/out/
+
+# Tool caches
+.vite/
+**/.vite/
+.next/
+**/.next/
+.nuxt/
+**/.nuxt/
+.svelte-kit/
+**/.svelte-kit/
+.astro/
+**/.astro/
+.turbo/
+**/.turbo/
+
+# Environment / local files
 .DS_Store
+*.log
 npm-debug.log*
 yarn-error.log*
