@@ -45,6 +45,15 @@ export interface Simulation {
   /** Removes any entity at `tile`. */
   removeEntity(tile: Tile): void;
 
+  /** Returns whether a tile can be removed at `tile` (e.g., not a resource node). */
+  canRemove?(tile: Tile): boolean;
+
+  /** Returns whether an entity currently occupies `tile`. */
+  hasEntityAt?(tile: Tile): boolean;
+
+  /** Returns whether `tile` is a resource tile that cannot be removed directly. */
+  isResourceTile?(tile: Tile): boolean;
+
   /** Optional simulation pause toggle. */
   togglePause?(): void;
 }
@@ -100,6 +109,25 @@ function nextRotation(rotation: Rotation): Rotation {
   return ((rotation + 1) % 4) as Rotation;
 }
 
+function canControllerRemoveTile(
+  sim: Simulation,
+  tile: Tile,
+): boolean {
+  if (typeof sim.canRemove === "function") {
+    return sim.canRemove(tile);
+  }
+
+  const hasEntity = sim.hasEntityAt?.(tile);
+  if (typeof hasEntity === "boolean") {
+    if (!hasEntity) {
+      return !(sim.isResourceTile?.(tile) ?? false);
+    }
+    return true;
+  }
+
+  return true;
+}
+
 /**
  * Creates a placement controller that owns selection/cursor state and delegates world mutation to `sim`.
  */
@@ -149,7 +177,12 @@ export function createPlacementController(
     },
 
     clickLMB(): void {
-      if (state.selectedKind === null || state.cursor === null || !state.canPlace) {
+      if (state.selectedKind === null || state.cursor === null) {
+        return;
+      }
+
+      if (!sim.canPlace(state.selectedKind, state.cursor, state.rotation)) {
+        state.canPlace = false;
         return;
       }
 
@@ -159,6 +192,10 @@ export function createPlacementController(
 
     clickRMB(): void {
       if (state.cursor === null) {
+        return;
+      }
+
+      if (!canControllerRemoveTile(sim, state.cursor)) {
         return;
       }
 
