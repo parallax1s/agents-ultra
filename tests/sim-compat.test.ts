@@ -1002,4 +1002,186 @@ describe("sim API compatibility", () => {
 
     expect(withPause).toBe(withoutPause);
   });
+
+  it("does not let a belt receive and forward on the same 15-tick boundary in single-hop chains", () => {
+    const minerKind = nextKind("compat-single-hop-miner");
+    const sourceBeltKind = nextKind("compat-single-hop-source-belt");
+    const targetBeltKind = nextKind("compat-single-hop-target-belt");
+
+    type SingleHopBeltState = CompatCadenceBeltState & {
+      receivedThisTick: boolean;
+    };
+
+    registerEntity(minerKind, {
+      create: () => ({
+        ticks: 0,
+        holding: "iron-ore" as ItemKind | null,
+        attempts: 0,
+        moved: 0,
+        blocked: 0,
+      }),
+      update: (entity, _dtMs, sim) => {
+        const state = asState<CompatMinerState>(entity.state);
+        if (state === undefined) {
+          return;
+        }
+
+        state.ticks += 1;
+        if (state.ticks % COMPAT_CHAIN_MINER_ATTEMPTS !== 0) {
+          return;
+        }
+
+        if (state.holding === null) {
+          state.holding = "iron-ore";
+        }
+
+        const ahead = {
+          x: entity.pos.x + offsetFrom(entity.rot).x,
+          y: entity.pos.y + offsetFrom(entity.rot).y,
+        };
+        const belt = findKindAt(sim, ahead, sourceBeltKind);
+        const beltState = asState<CompatCadenceBeltState>(belt?.state);
+
+        if (!beltState || beltState.item !== null) {
+          state.blocked += 1;
+          return;
+        }
+
+        state.attempts += 1;
+        beltState.item = state.holding;
+        beltState.receivedThisTick = true;
+        state.holding = null;
+        state.moved += 1;
+      },
+    });
+
+    registerEntity(sourceBeltKind, {
+      create: () => ({
+        ticks: 0,
+        item: null as ItemKind | null,
+        attempts: 0,
+        moved: 0,
+        blocked: 0,
+        receivedThisTick: false,
+      }),
+      update: (entity, _dtMs, sim) => {
+        const state = asState<SingleHopBeltState>(entity.state);
+        if (state === undefined) {
+          return;
+        }
+
+        const receivedThisTick = state.receivedThisTick;
+        state.receivedThisTick = false;
+        state.ticks += 1;
+        if (
+          state.ticks % COMPAT_CHAIN_BELT_ATTEMPTS !== 0 ||
+          receivedThisTick ||
+          state.item === null
+        ) {
+          return;
+        }
+
+        state.attempts += 1;
+        const ahead = {
+          x: entity.pos.x + offsetFrom(entity.rot).x,
+          y: entity.pos.y + offsetFrom(entity.rot).y,
+        };
+        const target = findKindAt(sim, ahead, targetBeltKind);
+        const targetState = asState<SingleHopBeltState>(target?.state);
+        if (!targetState || targetState.item !== null) {
+          state.blocked += 1;
+          return;
+        }
+
+        targetState.item = state.item;
+        state.item = null;
+        state.moved += 1;
+      },
+    });
+
+    registerEntity(targetBeltKind, {
+      create: () => ({
+        ticks: 0,
+        item: null as ItemKind | null,
+        attempts: 0,
+        moved: 0,
+        blocked: 0,
+        receivedThisTick: false,
+      }),
+      update: (entity) => {
+        const state = asState<CompatCadenceBeltState>(entity.state);
+        if (state === undefined) {
+          return;
+        }
+
+        state.ticks += 1;
+      },
+    });
+
+    const sim = createSim({ width: 8, height: 3, seed: 15 });
+
+    sim.addEntity({ kind: minerKind, pos: { x: 1, y: 1 }, rot: "E" });
+    const sourceBeltId = sim.addEntity({ kind: sourceBeltKind, pos: { x: 2, y: 1 }, rot: "E" });
+    const targetBeltId = sim.addEntity({ kind: targetBeltKind, pos: { x: 3, y: 1 }, rot: "E" });
+
+    const getBeltState = (id: string): CompatCadenceBeltState => {
+      const belt = sim.getEntityById(id);
+      const state = asState<CompatCadenceBeltState>(belt?.state);
+      if (state === undefined) {
+        throw new Error(`Expected belt state for entity ${id}`);
+      }
+      return state;
+    };
+
+    const advanceTo = (targetTick: number): void => {
+      for (let tick = sim.tickCount; tick < targetTick; tick += 1) {
+        sim.step(TICK_MS);
+      }
+    };
+
+    advanceTo(59);
+    expect(sim.tickCount).toBe(59);
+    expect(getBeltState(sourceBeltId)).toMatchObject({
+      item: null,
+      ticks: 59,
+      attempts: 0,
+      moved: 0,
+    });
+    expect(getBeltState(targetBeltId)).toMatchObject({
+      item: null,
+      ticks: 59,
+      attempts: 0,
+      moved: 0,
+    });
+
+    advanceTo(60);
+    expect(sim.tickCount).toBe(60);
+    expect(getBeltState(sourceBeltId)).toMatchObject({
+      item: "iron-ore",
+      ticks: 60,
+      attempts: 0,
+      moved: 0,
+    });
+    expect(getBeltState(targetBeltId)).toMatchObject({
+      item: null,
+      ticks: 60,
+      attempts: 0,
+      moved: 0,
+    });
+
+    advanceTo(75);
+    expect(sim.tickCount).toBe(75);
+    expect(getBeltState(sourceBeltId)).toMatchObject({
+      item: null,
+      ticks: 75,
+      attempts: 1,
+      moved: 1,
+    });
+    expect(getBeltState(targetBeltId)).toMatchObject({
+      item: "iron-ore",
+      ticks: 75,
+      attempts: 0,
+      moved: 0,
+    });
+  });
 });
