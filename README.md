@@ -36,6 +36,7 @@ npm run build
 npm run test
 npm run typecheck
 ```
+Use this mode for maintenance and local development. It keeps contributor loops moving by relying on skip behavior when optional test tooling is unavailable.
 
 ## Optional E2E (Playwright)
 ```bash
@@ -47,6 +48,15 @@ npm run test:e2e
 Notes:
 - `npm run test:e2e` skips automatically when Playwright is not installed.
 - E2E suite uses a Vite dev server on `http://127.0.0.1:4173`.
+
+### Split test modes
+
+- `npm test` (maintenance/local): run fast checks locally before/while editing.
+- `npm run test:strict` (CI/verification): run the strict path intended for CI and release gating.
+
+Expected behavior when dev dependencies are missing:
+- `npm test`: skips missing optional test suites and exits successfully.
+- `npm run test:strict`: exits non-zero with install guidance when required test binaries are absent.
 
 ## Maintenance Sweep
 Run this quick regression loop before/after gameplay changes:
