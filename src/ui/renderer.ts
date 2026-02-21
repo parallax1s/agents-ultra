@@ -15,6 +15,11 @@ declare global {
   interface Window {
     __SIM__?: unknown;
     __USE_SVGS__?: boolean;
+    __PLAYER__?: {
+      x: number;
+      y: number;
+      rot?: Direction;
+    };
   }
 }
 
@@ -620,7 +625,11 @@ export function createRenderer(canvas: HTMLCanvasElement): RendererApi {
       }
     }
 
-    drawPlayerMarker(ctx, gridW, gridH, t, snapshot as SnapshotWithOptionalPlayer, snapshot.time.tick);
+    const snapshotWithPlayer = snapshot as SnapshotWithOptionalPlayer;
+    if (window.__PLAYER__) {
+      snapshotWithPlayer.player = window.__PLAYER__;
+    }
+    drawPlayerMarker(ctx, gridW, gridH, t, snapshotWithPlayer, snapshot.time.tick);
 
     // Ghost highlight on top
     drawGhost(ctx, ghost, t);

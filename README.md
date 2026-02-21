@@ -8,6 +8,7 @@ This slice is centered on core placement interactions in a browser sandbox:
 - Rotate placement direction before placing
 - Place and remove structures on the grid
 - Pause and resume the simulation loop
+- Move a player marker with `W` / `A` / `S` / `D`
 
 The current slice is intentionally limited and does not yet include full logistics/economy systems.
 
@@ -120,6 +121,7 @@ npm run test
 ## Controls
 - `1` / `2` / `3` / `4`: select build slot
 - `R`: rotate selected building orientation
+- `W` / `A` / `S` / `D`: move player marker
 - `LMB` (left mouse button): place
 - `RMB` (right mouse button): remove
 - `Space`: pause/resume

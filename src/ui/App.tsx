@@ -57,6 +57,12 @@ type RuntimeEntity = {
   state?: Record<string, unknown>;
 };
 
+type PlayerState = {
+  x: number;
+  y: number;
+  rot: RuntimeDirection;
+};
+
 type PlacementSnapshot = {
   tick: number;
   tickCount: number;
@@ -377,6 +383,11 @@ export default function App() {
   const rendererRef = useRef<RendererApi | null>(null);
   const simulationRef = useRef<Simulation>(NOOP_SIMULATION);
   const feedbackTimeoutRef = useRef<number | null>(null);
+  const playerStateRef = useRef<PlayerState>({
+    x: Math.floor(WORLD_WIDTH / 2),
+    y: Math.floor(WORLD_HEIGHT / 2),
+    rot: 'S',
+  });
   const initialHud: HudState = {
     tool: null,
     rotation: 0,
@@ -515,8 +526,14 @@ export default function App() {
       syncHudFromSimulation();
     };
 
+    const setWindowPlayer = (next: PlayerState): void => {
+      const withPlayer = window as Window & { __PLAYER__?: PlayerState };
+      withPlayer.__PLAYER__ = { ...next };
+    };
+
     // Default to SVG rendering so imported art is visible immediately.
     window.__USE_SVGS__ = true;
+    setWindowPlayer(playerStateRef.current);
 
     const resizeCanvas = (): void => {
       const width = Math.max(1, Math.floor(container.clientWidth));
@@ -634,7 +651,44 @@ export default function App() {
       event.preventDefault();
     };
 
+    const movePlayer = (dx: number, dy: number, rot: RuntimeDirection): void => {
+      const prev = playerStateRef.current;
+      const nextX = Math.max(0, Math.min(WORLD_WIDTH - 1, prev.x + dx));
+      const nextY = Math.max(0, Math.min(WORLD_HEIGHT - 1, prev.y + dy));
+      const next: PlayerState = {
+        x: nextX,
+        y: nextY,
+        rot,
+      };
+      playerStateRef.current = next;
+      setWindowPlayer(next);
+    };
+
     const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.code === 'KeyW') {
+        movePlayer(0, -1, 'N');
+        event.preventDefault();
+        return;
+      }
+
+      if (event.code === 'KeyA') {
+        movePlayer(-1, 0, 'W');
+        event.preventDefault();
+        return;
+      }
+
+      if (event.code === 'KeyS') {
+        movePlayer(0, 1, 'S');
+        event.preventDefault();
+        return;
+      }
+
+      if (event.code === 'KeyD') {
+        movePlayer(1, 0, 'E');
+        event.preventDefault();
+        return;
+      }
+
       if (event.code in HOTKEY_TO_KIND) {
         const hotkey = event.code as keyof typeof HOTKEY_TO_KIND;
         controller.selectKind(HOTKEY_TO_KIND[hotkey]);
@@ -699,6 +753,7 @@ export default function App() {
         feedbackTimeoutRef.current = null;
       }
       delete window.__SIM__;
+      delete (window as Window & { __PLAYER__?: PlayerState }).__PLAYER__;
     };
   }, [syncGhostFromController, syncHudFromSimulation, syncPaletteFromController]);
 
