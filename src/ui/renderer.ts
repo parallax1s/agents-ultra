@@ -589,10 +589,12 @@ export function createRenderer(canvas: HTMLCanvasElement): RendererApi {
     if (nextTick === null) {
       try {
         const snapshot = createSnapshot(sim);
-        if (committedSnapshot === null) {
-          committedSnapshot = snapshot;
-          committedTick = nextTick;
+        const snapshotTick = toBoundaryCounter(snapshot.time.tick);
+        if (committedSnapshot !== null && committedTick === snapshotTick) {
+          return committedSnapshot;
         }
+        committedSnapshot = snapshot;
+        committedTick = snapshotTick;
         return snapshot;
       } catch {
         return null;

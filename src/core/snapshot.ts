@@ -78,6 +78,11 @@ type SnapshotPublicationState = {
   tick: number;
   tickCount: number;
   elapsedMs: number;
+  snapshot?: Snapshot;
+  snapshotWidth?: number;
+  snapshotHeight?: number;
+  snapshotTileSize?: number;
+  snapshotMap?: SnapshotMap;
 };
 
 const snapshotStateBySim = new WeakMap<object, SnapshotPublicationState>();
@@ -104,7 +109,7 @@ const asCommittedTiming = (
   proposedTick: number,
   proposedTickCount: number,
   proposedElapsedMs: number,
-): SnapshotTiming => {
+): SnapshotPublicationState => {
   if (!isObject(sim)) {
     return {
       tick: proposedTick,
@@ -115,7 +120,7 @@ const asCommittedTiming = (
 
   const previous = snapshotStateBySim.get(sim);
   if (previous === undefined) {
-    const initialState = {
+    const initialState: SnapshotPublicationState = {
       tick: proposedTick,
       tickCount: proposedTickCount,
       elapsedMs: proposedElapsedMs,
@@ -124,14 +129,11 @@ const asCommittedTiming = (
     return initialState;
   }
 
-  const committedTiming: SnapshotTiming = {
-    tick: proposedTick < previous.tick ? previous.tick : proposedTick,
-    tickCount: proposedTickCount < previous.tickCount ? previous.tickCount : proposedTickCount,
-    elapsedMs: proposedElapsedMs < previous.elapsedMs ? previous.elapsedMs : proposedElapsedMs,
-  };
+  previous.tick = proposedTick < previous.tick ? previous.tick : proposedTick;
+  previous.tickCount = proposedTickCount < previous.tickCount ? previous.tickCount : proposedTickCount;
+  previous.elapsedMs = proposedElapsedMs < previous.elapsedMs ? previous.elapsedMs : proposedElapsedMs;
 
-  snapshotStateBySim.set(sim, committedTiming);
-  return committedTiming;
+  return previous;
 };
 
 const isObject = (value: unknown): value is SnapshotState => {
@@ -512,6 +514,18 @@ export const createSnapshot = (sim: SnapshotSim): Snapshot => {
     ? sim.tileSize
     : DEFAULT_TILE_SIZE;
   const timing = asCommittedTiming(sim, tick, tickCount, elapsedMs);
+  if (
+    timing.snapshot !== undefined &&
+    timing.tick === timing.snapshot.time.tick &&
+    timing.tickCount === timing.snapshot.time.tickCount &&
+    timing.elapsedMs === timing.snapshot.time.elapsedMs &&
+    timing.snapshotWidth === width &&
+    timing.snapshotHeight === height &&
+    timing.snapshotTileSize === tileSize &&
+    timing.snapshotMap === map
+  ) {
+    return timing.snapshot;
+  }
 
   const ore = map === undefined ? [] : getCachedOreList(map);
   const entities = sim.getAllEntities?.() ?? [];
@@ -534,5 +548,12 @@ export const createSnapshot = (sim: SnapshotSim): Snapshot => {
   };
 
   deepFreezeSnapshot(snapshot);
+  if (isObject(sim)) {
+    timing.snapshot = snapshot;
+    timing.snapshotWidth = width;
+    timing.snapshotHeight = height;
+    timing.snapshotTileSize = tileSize;
+    timing.snapshotMap = map;
+  }
   return snapshot;
 };
