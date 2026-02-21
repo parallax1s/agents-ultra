@@ -24,7 +24,28 @@ declare global {
 }
 
 const imageCache: Record<string, HTMLImageElement> = {};
-const SVG_ASSET_NAMES = ["miner", "belt", "inserter", "furnace", "iron-ore", "player"] as const;
+const SVG_ASSET_NAMES = [
+  "miner",
+  "transport-belt-basic-yellow",
+  "basic-inserter",
+  "furnace",
+  "iron-ore",
+  "player",
+] as const;
+
+const SVG_ROTATION_OFFSETS_RAD: Readonly<Record<string, number>> = {
+  // Authored assets are north-up at 0deg; runtime uses east-facing at 0deg.
+  miner: Math.PI / 2,
+  belt: Math.PI / 2,
+  "transport-belt-basic-yellow": Math.PI / 2,
+  "transport-belt-fast-red": Math.PI / 2,
+  "transport-belt-express-blue": Math.PI / 2,
+  inserter: Math.PI / 2,
+  "basic-inserter": Math.PI / 2,
+  "burner-inserter": Math.PI / 2,
+  "fast-inserter": Math.PI / 2,
+  player: Math.PI / 2,
+};
 
 function getSvg(name: string): HTMLImageElement | null {
   if (imageCache[name]) return imageCache[name];
@@ -60,7 +81,8 @@ function drawSvg(
 
   ctx.save();
   ctx.translate(cx, cy + yOffsetPx);
-  ctx.rotate(dirToAngleRad(rot));
+  const rotationOffset = SVG_ROTATION_OFFSETS_RAD[name] ?? 0;
+  ctx.rotate(dirToAngleRad(rot) + rotationOffset);
   ctx.drawImage(img, -size / 2, -size / 2, size, size);
   ctx.restore();
   return true;
