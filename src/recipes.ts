@@ -9,7 +9,7 @@ export type Recipe = {
 export const IRON_ORE_TO_PLATE: Recipe = {
   input: 'iron-ore',
   output: 'iron-plate',
-  timeMs: 1000,
+  timeMs: 180,
 };
 
 export function getRecipeForInput(input: string): Recipe | undefined {

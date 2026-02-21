@@ -1,11 +1,11 @@
-import { FURNACE_INPUT_ITEM, FURNACE_OUTPUT_ITEM, isItemKind } from '../core/types';
+import { FURNACE_INPUT_ITEM, FURNACE_OUTPUT_ITEM, isItemKind, type ItemKind } from "../core/types";
 
 export const FURNACE_TYPE = 'furnace';
 const FURNACE_SMELT_TICKS = 180;
 
 export class Furnace {
-  input: string | null = null;
-  output: string | null = null;
+  input: ItemKind | null = null;
+  output: ItemKind | null = null;
   private crafting = false;
   private smeltProgressTicks = 0;
 
@@ -24,7 +24,7 @@ export class Furnace {
       return false;
     }
 
-    this.input = item;
+    this.input = item as ItemKind;
     return true;
   }
 
@@ -32,7 +32,7 @@ export class Furnace {
     return isItemKind(item) && item === FURNACE_OUTPUT_ITEM && this.output === FURNACE_OUTPUT_ITEM;
   }
 
-  provideItem(item: string): string | null {
+  provideItem(item: string): ItemKind | null {
     if (!this.canProvideItem(item)) {
       return null;
     }

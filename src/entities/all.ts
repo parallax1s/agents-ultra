@@ -1,5 +1,6 @@
 import {
   CANONICAL_TICK_PHASES,
+  CANONICAL_TICK_PHASE_CADENCE_TICKS,
   registerEntity,
   getDefinition,
 } from "../core/registry";
@@ -8,9 +9,8 @@ import { DIRECTION_VECTORS, OPPOSITE_DIRECTION } from "../core/types";
 import type { Direction, EntityBase, GridCoord, ItemKind } from "../core/types";
 import { Furnace, FURNACE_TYPE } from "./furnace";
 
-const MINER_CADENCE_TICKS = 60;
-const BELT_TRANSFER_CADENCE_TICKS = 15;
-const INSERTER_CADENCE_TICKS = 20;
+const getCanonicalCadenceTicks = (kind: CanonicalTickKind): number =>
+  CANONICAL_TICK_PHASE_CADENCE_TICKS[kind];
 
 type CanonicalTickKind = "miner" | "belt" | "inserter" | "furnace";
 
@@ -35,7 +35,7 @@ type TickPhaseState = {
 };
 
 const tickState = new WeakMap<object, TickPhaseState>();
-const canonicalPhaseKinds: ReadonlyArray<CanonicalTickKind> = ["miner", "belt", "inserter", "furnace"];
+const canonicalPhaseKinds: ReadonlyArray<CanonicalTickKind> = CANONICAL_TICK_PHASES;
 
 const isCanonicalTickKind = (kind: EntityBase["kind"]): kind is CanonicalTickKind => {
   return kind === "miner" || kind === "belt" || kind === "inserter" || kind === "furnace";
@@ -516,7 +516,7 @@ const chooseBeltTransferTarget = (
   resolutions: Map<string, BeltTransferResolution>,
 ): EntityBase | null => {
   const sourceState = ensureBeltState(source);
-  if (sourceState.item === null || sourceState.tickPhase % BELT_TRANSFER_CADENCE_TICKS !== 0) {
+  if (sourceState.item === null || sourceState.tickPhase % getCanonicalCadenceTicks("belt") !== 0) {
     return null;
   }
 
@@ -565,7 +565,7 @@ const buildBeltTransferPlans = (
 
   for (const source of entities) {
     const sourceState = ensureBeltState(source);
-    if (sourceState.item === null || sourceState.tickPhase % BELT_TRANSFER_CADENCE_TICKS !== 0) {
+    if (sourceState.item === null || sourceState.tickPhase % getCanonicalCadenceTicks("belt") !== 0) {
       continue;
     }
 
@@ -623,7 +623,7 @@ const tickMinerEntity = (entity: EntityBase, _dtMs: number, sim: SimLike): void 
   const state = ensureMinerState(entity);
   state.tickPhase += 1;
 
-  if (state.tickPhase % MINER_CADENCE_TICKS !== 0) {
+  if (state.tickPhase % getCanonicalCadenceTicks("miner") !== 0) {
     state.hasOutput = false;
     state.output = null;
     return;
@@ -684,7 +684,7 @@ const tickInserterEntity = (entity: EntityBase, _dtMs: number, sim: SimLike): vo
   const state = ensureInserterState(entity);
   state.tickPhase += 1;
 
-  if (state.tickPhase % INSERTER_CADENCE_TICKS !== 0) {
+  if (state.tickPhase % getCanonicalCadenceTicks("inserter") !== 0) {
     return;
   }
 
@@ -867,9 +867,9 @@ const registerDefaults = (): void => {
 
 registerDefaults();
 
-export const MINER_ATTEMPT_TICKS = 60;
-export const BELT_ATTEMPT_TICKS = 15;
-export const INSERTER_ATTEMPT_TICKS = 20;
+export const MINER_ATTEMPT_TICKS = CANONICAL_TICK_PHASE_CADENCE_TICKS.miner;
+export const BELT_ATTEMPT_TICKS = CANONICAL_TICK_PHASE_CADENCE_TICKS.belt;
+export const INSERTER_ATTEMPT_TICKS = CANONICAL_TICK_PHASE_CADENCE_TICKS.inserter;
 
 const isBoundaryTick = (tick: number, interval: number): boolean => {
   if (interval <= 0 || !Number.isInteger(interval)) {
