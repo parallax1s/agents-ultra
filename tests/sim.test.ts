@@ -470,6 +470,38 @@ describe("simulation registry and loop", () => {
     expect(updateCalls).toBe(2);
   });
 
+  test("keeps tickCount and elapsedMs aligned across aggregated fractional steps", () => {
+    const kind = nextKind("miner-aggregated-fractional");
+    const tickMs = 1000 / 60;
+
+    registerEntity(kind, {
+      create: () => ({ updates: 0 }),
+      update: (entity: unknown) => {
+        if (typeof entity !== "object" || entity === null || !("state" in entity)) {
+          throw new Error("Unexpected entity shape passed to update");
+        }
+
+        const entityWithState = entity as { state?: { updates?: number } };
+        if (!entityWithState.state) {
+          entityWithState.state = { updates: 0 };
+        }
+
+        entityWithState.state.updates = (entityWithState.state.updates ?? 0) + 1;
+      },
+    });
+
+    const sim = createSim();
+    sim.addEntity({ kind, pos: { x: 0, y: 0 } } as Parameters<typeof sim.addEntity>[0]);
+
+    sim.step(5 * tickMs + tickMs / 2);
+    expect(sim.tickCount).toBe(5);
+    expect(sim.elapsedMs).toBeCloseTo(5 * tickMs, 6);
+
+    sim.step(tickMs / 2);
+    expect(sim.tickCount).toBe(6);
+    expect(sim.elapsedMs).toBeCloseTo(6 * tickMs, 6);
+  });
+
   test("advances fixed-step updates deterministically for legacy addEntity(kind, init)", () => {
     const kind = nextKind("miner-compat-fixed");
     const tickMs = 1000 / 60;
@@ -1268,6 +1300,14 @@ describe("simulation registry and loop", () => {
 
     directionSequence.push(current);
     expect(directionSequence).toEqual([...DIRECTION_SEQUENCE, "N"]);
+  });
+
+  test("normalizes arbitrary rotateDirection step counts (including negative)", () => {
+    expect(rotateDirection("N", 0)).toBe("N");
+    expect(rotateDirection("N", 4)).toBe("N");
+    expect(rotateDirection("E", 6)).toBe("W");
+    expect(rotateDirection("W", -1)).toBe("S");
+    expect(rotateDirection("S", -5)).toBe("E");
   });
 
   test("applies one deterministic rotation step per R key action", () => {
