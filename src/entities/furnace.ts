@@ -1,4 +1,5 @@
 import { getRecipeForInput } from '../recipes';
+import { isItemKind } from '../core/types';
 
 export const FURNACE_TYPE = 'furnace';
 const FURNACE_SMELT_TICKS = 180;
@@ -12,6 +13,7 @@ export class Furnace {
 
   canAcceptItem(item: string): boolean {
     return (
+      isItemKind(item) &&
       getRecipeForInput(item) !== undefined &&
       this.input === null &&
       !this.crafting &&
@@ -29,7 +31,7 @@ export class Furnace {
   }
 
   canProvideItem(item: string): boolean {
-    return item === 'iron-plate' && this.output === 'iron-plate';
+    return isItemKind(item) && item === 'iron-plate' && this.output === 'iron-plate';
   }
 
   provideItem(item: string): string | null {

@@ -38,6 +38,11 @@ export const rotateDirection = (direction: Direction, steps = 1): Direction => {
 
 export type ItemKind = 'iron-ore' | 'iron-plate';
 
+export const SLICE_ITEM_KINDS = ['iron-ore', 'iron-plate'] as const satisfies readonly ItemKind[];
+
+export const isItemKind = (value: string): value is ItemKind =>
+  (SLICE_ITEM_KINDS as readonly string[]).includes(value);
+
 export type EntityKind = 'resource' | 'miner' | 'belt' | 'inserter' | 'furnace' | 'chest';
 
 export interface EntityBase {

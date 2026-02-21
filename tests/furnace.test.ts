@@ -293,6 +293,41 @@ describe('Furnace', () => {
     expect(furnace.provideItem('iron-plate')).toBeNull();
   });
 
+  it('rejects non-slice items deterministically and ignores them during processing', () => {
+    const furnace = new Furnace();
+
+    expect(furnace.canAcceptItem('copper-ore')).toBe(false);
+    expect(furnace.acceptItem('copper-ore')).toBe(false);
+    expect(furnace.input).toBeNull();
+    expect(furnace.output).toBeNull();
+
+    runTicks(furnace, FURNACE_SMELT_TICKS * 2);
+    expect(furnace.canProvideItem('iron-plate')).toBe(false);
+    expect(furnace.provideItem('iron-plate')).toBeNull();
+
+    expect(furnace.acceptItem('iron-ore')).toBe(true);
+    furnace.update(0);
+    runTicks(furnace, FURNACE_SMELT_TICKS - 1);
+    expect(furnace.canProvideItem('iron-plate')).toBe(false);
+    runTicks(furnace, 1);
+    expect(furnace.canProvideItem('iron-plate')).toBe(true);
+    expect(furnace.provideItem('copper-plate')).toBeNull();
+    expect(furnace.provideItem('iron-plate')).toBe('iron-plate');
+  });
+
+  it('smelts ore to plate after 180 ticks without any fuel gate', () => {
+    const furnace = new Furnace();
+
+    expect(furnace.acceptItem('iron-ore')).toBe(true);
+    furnace.update(0);
+    runTicks(furnace, FURNACE_SMELT_TICKS - 1);
+    expect(furnace.canProvideItem('iron-plate')).toBe(false);
+
+    runTicks(furnace, 1);
+    expect(furnace.canProvideItem('iron-plate')).toBe(true);
+    expect(furnace.provideItem('iron-plate')).toBe('iron-plate');
+  });
+
   it('advances to output only on exact furnace boundary ticks for repeated cycles', () => {
     const furnace = new Furnace();
 
