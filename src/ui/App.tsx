@@ -11,8 +11,10 @@ import {
   type Rotation,
   type Simulation,
 } from './placement';
-import { createRenderer } from './renderer';
+import { createRenderer, preloadRendererSvgs } from './renderer';
 import { createMap } from '../core/map';
+import { createSim } from '../core/sim';
+import '../entities/all';
 
 const TILE_SIZE = 32;
 const WORLD_WIDTH = 60;
@@ -112,10 +114,13 @@ const ROTATION_TO_DIRECTION: Record<Rotation, RuntimeDirection> = {
 
 function createRuntimeSimulation(): RuntimeSimulation {
   const map = createMap(WORLD_WIDTH, WORLD_HEIGHT, WORLD_SEED);
-  const entities = new Map<string, RuntimeEntity>();
+  const sim = createSim({
+    width: WORLD_WIDTH,
+    height: WORLD_HEIGHT,
+    seed: WORLD_SEED,
+  });
   const indexByTile = new Map<string, string>();
-  let nextId = 1;
-  let paused = false;
+  const tileByEntity = new Map<string, string>();
   let intervalId: number | null = null;
 
   const toKey = (tile: Tile): string => `${tile.x},${tile.y}`;
@@ -126,32 +131,59 @@ function createRuntimeSimulation(): RuntimeSimulation {
     width: WORLD_WIDTH,
     height: WORLD_HEIGHT,
     tileSize: TILE_SIZE,
-    tick: 0,
-    tickCount: 0,
-    elapsedMs: 0,
+    get tick(): number {
+      return sim.tick;
+    },
+    get tickCount(): number {
+      return sim.tickCount;
+    },
+    get elapsedMs(): number {
+      return sim.elapsedMs;
+    },
 
     getMap: () => map,
 
-    getAllEntities: () => Array.from(entities.values()),
+    getAllEntities: () => {
+      const entities = sim.getAllEntities();
+      return entities.map((entity) => ({
+        id: entity.id,
+        kind: entity.kind as RuntimeEntityKind,
+        pos: { x: entity.pos.x, y: entity.pos.y },
+        rot: entity.rot as RuntimeDirection,
+        state:
+          typeof entity.state === 'object' && entity.state !== null
+            ? ({ ...(entity.state as Record<string, unknown>) } as Record<string, unknown>)
+            : undefined,
+      }));
+    },
 
     getPlacementSnapshot() {
       return {
-        tick: runtime.tick,
-        tickCount: runtime.tickCount,
-        elapsedMs: runtime.elapsedMs,
-        entityCount: entities.size,
+        tick: sim.tick,
+        tickCount: sim.tickCount,
+        elapsedMs: sim.elapsedMs,
+        entityCount: sim.getAllEntities().length,
       };
     },
 
     canRemove(tile) {
-      return indexByTile.has(toKey(tile));
+      if (!inBounds(tile)) {
+        return false;
+      }
+      return map.hasEntityAt(tile);
     },
 
     hasEntityAt(tile) {
-      return indexByTile.has(toKey(tile));
+      if (!inBounds(tile)) {
+        return false;
+      }
+      return map.hasEntityAt(tile);
     },
 
     isResourceTile(tile) {
+      if (!inBounds(tile)) {
+        return false;
+      }
       return map.isOre(tile.x, tile.y);
     },
 
@@ -160,8 +192,7 @@ function createRuntimeSimulation(): RuntimeSimulation {
         return false;
       }
 
-      const tileKey = toKey(tile);
-      if (indexByTile.has(tileKey)) {
+      if (map.hasEntityAt(tile)) {
         return false;
       }
 
@@ -177,17 +208,20 @@ function createRuntimeSimulation(): RuntimeSimulation {
         return;
       }
 
-      const id = String(nextId++);
       const rot = ROTATION_TO_DIRECTION[rotation];
       const runtimeKind = RUNTIME_KIND[kind];
-      const entity: RuntimeEntity = {
-        id,
-        kind: runtimeKind,
+      const placement = map.place(runtimeKind, tile);
+      if (!placement.ok) {
+        return;
+      }
+
+      const created = sim.addEntity(runtimeKind, {
         pos: { x: tile.x, y: tile.y },
         rot,
-      };
-      entities.set(id, entity);
-      indexByTile.set(toKey(tile), id);
+      });
+      const tileKey = toKey(tile);
+      indexByTile.set(tileKey, created.id);
+      tileByEntity.set(created.id, tileKey);
     },
 
     removeEntity(tile) {
@@ -196,16 +230,33 @@ function createRuntimeSimulation(): RuntimeSimulation {
       if (!id) {
         return;
       }
+      const removed = sim.removeEntity(id);
+      if (removed === null) {
+        return;
+      }
+
+      const removal = map.remove(tile);
+      if (!removal.ok) {
+        sim.addEntity(removed.kind, {
+          pos: { x: removed.pos.x, y: removed.pos.y },
+          rot: removed.rot,
+          ...(typeof removed.state === 'object' && removed.state !== null
+            ? { ...(removed.state as Record<string, unknown>) }
+            : {}),
+        });
+        return;
+      }
+
       indexByTile.delete(tileKey);
-      entities.delete(id);
+      tileByEntity.delete(id);
     },
 
     togglePause() {
-      paused = !paused;
+      sim.togglePause();
     },
 
     isPaused() {
-      return paused;
+      return sim.paused;
     },
 
     destroy() {
@@ -217,12 +268,7 @@ function createRuntimeSimulation(): RuntimeSimulation {
   };
 
   intervalId = window.setInterval(() => {
-    if (paused) {
-      return;
-    }
-    runtime.tick += 1;
-    runtime.tickCount += 1;
-    runtime.elapsedMs += Math.round(1000 / 60);
+    sim.step(1000 / 60);
   }, 1000 / 60);
 
   return runtime;
@@ -533,6 +579,7 @@ export default function App() {
 
     // Default to SVG rendering so imported art is visible immediately.
     window.__USE_SVGS__ = true;
+    preloadRendererSvgs();
     setWindowPlayer(playerStateRef.current);
 
     const resizeCanvas = (): void => {

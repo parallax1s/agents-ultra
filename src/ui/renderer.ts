@@ -24,6 +24,7 @@ declare global {
 }
 
 const imageCache: Record<string, HTMLImageElement> = {};
+const SVG_ASSET_NAMES = ["miner", "belt", "inserter", "furnace", "iron-ore", "player"] as const;
 
 function getSvg(name: string): HTMLImageElement | null {
   if (imageCache[name]) return imageCache[name];
@@ -32,6 +33,12 @@ function getSvg(name: string): HTMLImageElement | null {
   img.src = `/${name}.svg`;
   imageCache[name] = img;
   return img;
+}
+
+export function preloadRendererSvgs(): void {
+  for (const name of SVG_ASSET_NAMES) {
+    getSvg(name);
+  }
 }
 
 function drawSvg(

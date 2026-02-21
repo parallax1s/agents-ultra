@@ -235,6 +235,20 @@ const createOreList = (map: SnapshotMap): ReadonlyArray<Readonly<SnapshotOreCell
   return cells;
 };
 
+const oreListCache = new WeakMap<object, ReadonlyArray<Readonly<SnapshotOreCell>>>();
+
+const getCachedOreList = (map: SnapshotMap): ReadonlyArray<Readonly<SnapshotOreCell>> => {
+  const cacheKey = map as object;
+  const cached = oreListCache.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const computed = createOreList(map);
+  oreListCache.set(cacheKey, computed);
+  return computed;
+};
+
 const extractLightState = (entity: EntityBase): unknown => {
   const state = asSnapshotState(entity.state);
   if (state !== undefined && "light" in state) {
@@ -441,7 +455,7 @@ export const createSnapshot = (sim: SnapshotSim): Snapshot => {
     : DEFAULT_TILE_SIZE;
   const timing = asCommittedTiming(sim, tick, tickCount, elapsedMs);
 
-  const ore = map === undefined ? [] : createOreList(map);
+  const ore = map === undefined ? [] : getCachedOreList(map);
   const entities = sim.getAllEntities?.() ?? [];
 
   const snapshot: Snapshot = {
