@@ -18,20 +18,35 @@ declare global {
   }
 }
 
-const imageCache: Record<string, HTMLImageElement> = {};
+const imageCache: Record<string, HTMLCanvasElement> = {};
 
-function getSvg(name: string): HTMLImageElement {
+function getSvgCanvas(name: string): HTMLCanvasElement | null {
   if (imageCache[name]) return imageCache[name];
-  // Note: standard item SVGs map directly, some entities have specific names
+
   const img = new Image();
   img.src = `/${name}.svg`;
-  imageCache[name] = img;
-  return img;
+
+  // We cannot draw it synchronously if it hasn't loaded. 
+  // We'll return null and cache a temporary canvas once it loads.
+  const tempCanvas = document.createElement("canvas");
+  imageCache[name] = tempCanvas; // Store it immediately so we don't spam new Image()
+
+  img.onload = () => {
+    // SVGs in this project are 100x100 viewBox, 200x200 intrinsic. Rasterize at 200x200.
+    tempCanvas.width = 200;
+    tempCanvas.height = 200;
+    const ctx = tempCanvas.getContext("2d");
+    if (ctx) {
+      ctx.drawImage(img, 0, 0, 200, 200);
+    }
+  };
+
+  return tempCanvas.width > 0 ? tempCanvas : null;
 }
 
 function drawSvg(ctx: CanvasRenderingContext2D, name: string, x: number, y: number, rot: Direction, t: Transform, fitScale = 1.0): boolean {
-  const img = getSvg(name);
-  if (!img.complete || img.naturalWidth === 0) return false;
+  const cachedCanvas = getSvgCanvas(name);
+  if (!cachedCanvas || cachedCanvas.width === 0) return false;
 
   const cx = t.offsetX + (x + 0.5) * t.tileRender;
   const cy = t.offsetY + (y + 0.5) * t.tileRender;
@@ -40,7 +55,7 @@ function drawSvg(ctx: CanvasRenderingContext2D, name: string, x: number, y: numb
   ctx.save();
   ctx.translate(cx, cy);
   ctx.rotate(dirToAngleRad(rot));
-  ctx.drawImage(img, -size / 2, -size / 2, size, size);
+  ctx.drawImage(cachedCanvas, -size / 2, -size / 2, size, size);
   ctx.restore();
   return true;
 }
@@ -219,12 +234,12 @@ function drawBelt(
   const items = parseBeltItems(itemHint);
   for (const it of items) {
     if (useSvgs) {
-      const img = getSvg(it.kind);
-      if (img.complete && img.naturalWidth > 0) {
+      const cachedCanvas = getSvgCanvas(it.kind);
+      if (cachedCanvas && cachedCanvas.width > 0) {
         const iz = t.tileRender * 0.45;
         const ix = -t.tileRender * 0.25 + it.pos * (t.tileRender * 0.5);
         ctx.globalAlpha = 1.0;
-        ctx.drawImage(img, ix - iz / 2, -iz / 2, iz, iz);
+        ctx.drawImage(cachedCanvas, ix - iz / 2, -iz / 2, iz, iz);
         continue;
       }
     }
