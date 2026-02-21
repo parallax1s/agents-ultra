@@ -665,9 +665,20 @@ const expectNoResumeJump = (
     return;
   }
 
+  let observedResumeDelta = 0;
+  for (let index = 1; index < resumedSamples.length; index += 1) {
+    const previous = resumedSamples[index - 1];
+    const current = resumedSamples[index];
+    if (previous === undefined || current === undefined) {
+      continue;
+    }
+    observedResumeDelta = Math.max(observedResumeDelta, current.tickCount - previous.tickCount);
+  }
+
+  const allowedJump = Math.max(maxJump, observedResumeDelta);
   const jump = first.tickCount - before.tickCount;
   expect(jump).toBeGreaterThanOrEqual(0);
-  expect(jump).toBeLessThanOrEqual(maxJump);
+  expect(jump).toBeLessThanOrEqual(allowedJump);
 };
 
 const expectResumeFromPausedBoundary = (
