@@ -1436,6 +1436,116 @@ describe("simulation registry and loop", () => {
     expect(rotateDirection("S", -5)).toBe("E");
   });
 
+  test("keeps 60 TPS phase order stable across chunk patterns and pause/resume invariance", () => {
+    const tickMs = 1000 / 60;
+    const orderedPhases = ["miner", "belt", "furnace", "inserter", "unphased"] as const;
+    type PhaseLabel = (typeof orderedPhases)[number];
+    type TraceEvent = { tick: number; phase: PhaseLabel };
+
+    const runScenario = (chunkFractionsInTwelfths: number[]): {
+      trace: TraceEvent[];
+      tickCount: number;
+      elapsedMs: number;
+      world: Array<{ id: string; pos: { x: number; y: number }; rot: Direction; updates: number }>;
+    } => {
+      const trace: TraceEvent[] = [];
+      const sim = createSim({ width: 8, height: 8, seed: 91 });
+      const kinds: Record<PhaseLabel, string> = {
+        miner: nextKind("phase-order-miner"),
+        belt: nextKind("phase-order-belt"),
+        furnace: nextKind("phase-order-furnace"),
+        inserter: nextKind("phase-order-inserter"),
+        unphased: nextKind("phase-order-unphased"),
+      };
+
+      const registerPhaseProbe = (
+        phase: PhaseLabel,
+        tickPhase?: "miner" | "belt" | "furnace" | "inserter",
+      ): void => {
+        registerEntity(kinds[phase], {
+          ...(tickPhase === undefined ? {} : { tickPhase }),
+          create: () => ({ updates: 0 }),
+          update: (entity: EntityBase, _dtMs: number, context: { tick: number }) => {
+            const state = entity.state as { updates?: number } | undefined;
+            entity.state = { updates: (state?.updates ?? 0) + 1 };
+            trace.push({ tick: context.tick, phase });
+          },
+        });
+      };
+
+      registerPhaseProbe("miner", "miner");
+      registerPhaseProbe("belt", "belt");
+      registerPhaseProbe("furnace", "furnace");
+      registerPhaseProbe("inserter", "inserter");
+      registerPhaseProbe("unphased");
+
+      sim.addEntity({ kind: kinds.unphased, pos: { x: 0, y: 0 } });
+      sim.addEntity({ kind: kinds.inserter, pos: { x: 1, y: 0 } });
+      sim.addEntity({ kind: kinds.furnace, pos: { x: 2, y: 0 } });
+      sim.addEntity({ kind: kinds.belt, pos: { x: 3, y: 0 } });
+      sim.addEntity({ kind: kinds.miner, pos: { x: 4, y: 0 } });
+
+      for (const fraction of chunkFractionsInTwelfths) {
+        sim.step((fraction * tickMs) / 12);
+      }
+
+      const beforePause = {
+        tickCount: sim.tickCount,
+        elapsedMs: sim.elapsedMs,
+        world: snapshotWorld(sim),
+        traceLength: trace.length,
+      };
+      sim.pause();
+      sim.step(11 * tickMs);
+      sim.step(tickMs / 3);
+      expect(sim.tickCount).toBe(beforePause.tickCount);
+      expect(sim.elapsedMs).toBe(beforePause.elapsedMs);
+      expect(snapshotWorld(sim)).toEqual(beforePause.world);
+      expect(trace).toHaveLength(beforePause.traceLength);
+
+      sim.resume();
+      sim.step(tickMs);
+
+      return {
+        trace,
+        tickCount: sim.tickCount,
+        elapsedMs: sim.elapsedMs,
+        world: sim
+          .getAllEntities()
+          .map((entity) => ({
+            id: entity.id,
+            pos: { x: entity.pos.x, y: entity.pos.y },
+            rot: entity.rot,
+            updates:
+              typeof entity.state === "object" &&
+              entity.state !== null &&
+              "updates" in entity.state &&
+              typeof (entity.state as { updates?: unknown }).updates === "number"
+                ? ((entity.state as { updates: number }).updates ?? 0)
+                : 0,
+          }))
+          .sort((left, right) => Number(left.id) - Number(right.id)),
+      };
+    };
+
+    const baseline = runScenario([720]);
+    const chunked = runScenario([7, 11, 13, 19, 23, 29, 31, 37, 41, 47, 53, 409]);
+    const repeated = runScenario([5, 7, 9, 11, 13, 17, 19, 23, 616]);
+
+    expect(chunked).toEqual(baseline);
+    expect(repeated).toEqual(baseline);
+    expect(baseline.tickCount).toBe(61);
+    expect(baseline.elapsedMs).toBeCloseTo(61 * tickMs, 6);
+    expect(baseline.trace).toHaveLength(61 * orderedPhases.length);
+
+    for (let tick = 0; tick < 61; tick += 1) {
+      const phases = baseline.trace
+        .filter((event) => event.tick === tick)
+        .map((event) => event.phase);
+      expect(phases).toEqual(orderedPhases);
+    }
+  });
+
   test("applies one deterministic rotation step per R key action", () => {
     const kind = nextKind("miner-rotate-input");
     registerEntity(kind, {
