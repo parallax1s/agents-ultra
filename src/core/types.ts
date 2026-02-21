@@ -71,3 +71,9 @@ export type StartupProbeState = Readonly<{
   phase: StartupProbePhase;
   error?: string;
 }>;
+
+export type SimCommittedTiming = Readonly<{
+  tick: number;
+  tickCount: number;
+  elapsedMs: number;
+}>;

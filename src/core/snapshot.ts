@@ -4,6 +4,7 @@ import type {
   EntityKind,
   GridCoord,
   ItemKind,
+  SimCommittedTiming,
   StartupProbeState,
 } from "./types";
 
@@ -86,9 +87,7 @@ type SnapshotInserterState = "idle" | "pickup" | "swing" | "drop";
 const DEFAULT_TILE_SIZE = 32;
 
 type SnapshotPublicationState = {
-  tick: number;
-  tickCount: number;
-  elapsedMs: number;
+  timing: SimCommittedTiming;
   snapshotProbe?: SnapshotProbe;
   snapshot?: Snapshot;
   snapshotWidth?: number;
@@ -124,27 +123,38 @@ const asCommittedTiming = (
 ): SnapshotPublicationState => {
   if (!isObject(sim)) {
     return {
-      tick: proposedTick,
-      tickCount: proposedTickCount,
-      elapsedMs: proposedElapsedMs,
+      timing: {
+        tick: proposedTick,
+        tickCount: proposedTickCount,
+        elapsedMs: proposedElapsedMs,
+      },
     };
   }
 
   const previous = snapshotStateBySim.get(sim);
   if (previous === undefined) {
     const initialState: SnapshotPublicationState = {
-      tick: proposedTick,
-      tickCount: proposedTickCount,
-      elapsedMs: proposedElapsedMs,
+      timing: {
+        tick: proposedTick,
+        tickCount: proposedTickCount,
+        elapsedMs: proposedElapsedMs,
+      },
       snapshotProbe: getProbeFromSim(sim),
     };
     snapshotStateBySim.set(sim, initialState);
     return initialState;
   }
 
-  previous.tick = proposedTick < previous.tick ? previous.tick : proposedTick;
-  previous.tickCount = proposedTickCount < previous.tickCount ? previous.tickCount : proposedTickCount;
-  previous.elapsedMs = proposedElapsedMs < previous.elapsedMs ? previous.elapsedMs : proposedElapsedMs;
+  const hasCommittedBoundary = proposedTick > previous.timing.tick || proposedTickCount > previous.timing.tickCount;
+  const nextTiming: SimCommittedTiming = {
+    tick: proposedTick > previous.timing.tick ? proposedTick : previous.timing.tick,
+    tickCount:
+      proposedTickCount > previous.timing.tickCount ? proposedTickCount : previous.timing.tickCount,
+    elapsedMs: hasCommittedBoundary
+      ? (proposedElapsedMs < previous.timing.elapsedMs ? previous.timing.elapsedMs : proposedElapsedMs)
+      : previous.timing.elapsedMs,
+  };
+  previous.timing = nextTiming;
   previous.snapshotProbe = getProbeFromSim(sim);
 
   return previous;
@@ -562,6 +572,15 @@ const createEntitySnapshot = (entity: EntityBase): SnapshotEntity => {
   return baseSnapshot;
 };
 
+const compareSnapshotEntityIds = (left: EntityBase, right: EntityBase): number => {
+  const leftValue = Number(left.id);
+  const rightValue = Number(right.id);
+  if (Number.isFinite(leftValue) && Number.isFinite(rightValue)) {
+    return leftValue - rightValue;
+  }
+  return left.id.localeCompare(right.id);
+};
+
 export const createSnapshot = (sim: SnapshotSim): Snapshot => {
   const map = getSnapshotMap(sim);
   const width = clampCounter(sim.width ?? map?.width);
@@ -576,9 +595,8 @@ export const createSnapshot = (sim: SnapshotSim): Snapshot => {
   const timing = asCommittedTiming(sim, tick, tickCount, elapsedMs);
   if (
     timing.snapshot !== undefined &&
-    timing.tick === timing.snapshot.time.tick &&
-    timing.tickCount === timing.snapshot.time.tickCount &&
-    timing.elapsedMs === timing.snapshot.time.elapsedMs &&
+    timing.timing.tick === timing.snapshot.time.tick &&
+    timing.timing.tickCount === timing.snapshot.time.tickCount &&
     timing.snapshotWidth === width &&
     timing.snapshotHeight === height &&
     timing.snapshotTileSize === tileSize &&
@@ -601,13 +619,13 @@ export const createSnapshot = (sim: SnapshotSim): Snapshot => {
       tileSize,
     },
     time: {
-      tick: timing.tick,
-      elapsedMs: timing.elapsedMs,
-      tickCount: timing.tickCount,
+      tick: timing.timing.tick,
+      elapsedMs: timing.timing.elapsedMs,
+      tickCount: timing.timing.tickCount,
     },
     probe: getProbeFromSim(sim),
     ore,
-    entities: entities.map(createEntitySnapshot),
+    entities: entities.slice().sort(compareSnapshotEntityIds).map(createEntitySnapshot),
     ...(player === undefined ? {} : { player }),
   };
 
