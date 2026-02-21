@@ -8,7 +8,9 @@ This slice is centered on core placement interactions in a browser sandbox:
 - Rotate placement direction before placing
 - Place and remove structures on the grid
 - Pause and resume the simulation loop
-- Move a player marker with `W` / `A` / `S` / `D`
+- Move the player avatar with `W` / `A` / `S` / `D` (or arrow keys)
+- Refuel with `F` near furnace output using smelted iron-plate
+- Track furnace/resource flow via live HUD metrics
 
 The current slice is intentionally limited and does not yet include full logistics/economy systems.
 For a full implemented-vs-missing snapshot, see `FEATURE_MATRIX.md`.
@@ -122,7 +124,8 @@ npm run test
 ## Controls
 - `1` / `2` / `3` / `4`: select build slot
 - `R`: rotate selected building orientation
-- `W` / `A` / `S` / `D`: move player marker
+- `W` / `A` / `S` / `D` or arrow keys: move player avatar
+- `F`: refuel from nearby furnace output (consumes one iron-plate)
 - `LMB` (left mouse button): place
 - `RMB` (right mouse button): remove
 - `Space`: pause/resume
@@ -146,8 +149,8 @@ npm run test
 
 ## Known Limitations
 - No power system yet
-- No fuel/refuel system yet (`F` action not implemented)
 - No splitters yet
+- Fuel loop is intentionally lightweight (single player fuel pool, no power network coupling)
 
 ## Troubleshooting
 - `npm: command not found`: reinstall Node.js `20+` and confirm with `node -v` and `npm -v`.

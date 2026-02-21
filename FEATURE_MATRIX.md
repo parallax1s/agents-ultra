@@ -18,7 +18,13 @@ Status snapshot: `a0176a8`
   - Pause/resume via `Space`
   - Deterministic tick-phase ordering (`miner -> belt -> furnace -> inserter`)
 - Player marker controls:
-  - `W` / `A` / `S` / `D`
+  - `W` / `A` / `S` / `D` and arrow keys
+  - `F` refuel near furnace output (consumes one `iron-plate`)
+- HUD runtime metrics:
+  - Player position + fuel/max fuel
+  - Entity composition counts (`miner/belt/inserter/furnace`)
+  - Item transit counters (`iron-ore` / `iron-plate`)
+  - Furnace craft/ready counters
 - SVG rendering mode:
   - In-app toggle button (`SVGs Enabled/Disabled`)
 - Transport behavior:
@@ -36,7 +42,6 @@ Status snapshot: `a0176a8`
   - `npm run test:strict`
 
 ## Not Implemented / Missing
-- Refuel interaction (`F`) is not implemented in this codebase
 - Fuel system / burner gameplay loop
 - Power network and power consumers/producers
 - Splitters and advanced logistics components

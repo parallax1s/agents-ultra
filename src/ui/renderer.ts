@@ -15,11 +15,6 @@ declare global {
   interface Window {
     __SIM__?: unknown;
     __USE_SVGS__?: boolean;
-    __PLAYER__?: {
-      x: number;
-      y: number;
-      rot?: Direction;
-    };
   }
 }
 
@@ -134,6 +129,8 @@ type SnapshotWithOptionalPlayer = Snapshot & {
     x: number;
     y: number;
     rot?: Direction;
+    fuel?: number;
+    maxFuel?: number;
   };
 };
 
@@ -224,34 +221,50 @@ function drawPlayerMarker(
   const py =
     player && Number.isFinite(player.y) ? Math.max(0, Math.min(gridH - 1, Math.floor(player.y))) : Math.floor(gridH / 2);
   const rot: Direction = player?.rot ?? "S";
+  const fuel = typeof player?.fuel === "number" && Number.isFinite(player.fuel) ? Math.max(0, player.fuel) : 100;
+  const maxFuel =
+    typeof player?.maxFuel === "number" && Number.isFinite(player.maxFuel)
+      ? Math.max(1, player.maxFuel)
+      : 100;
+  const fuelRatio = Math.max(0, Math.min(1, fuel / maxFuel));
   const bob = animate ? Math.sin(timeTick * 0.22) * t.tileRender * 0.015 : 0;
   const pulse = animate ? 1 + 0.03 * Math.sin(timeTick * 0.2 + 0.7) : 1;
-
-  if (!!window.__USE_SVGS__ && drawSvg(ctx, "player", px, py, rot, t, 0.72 * pulse, bob)) {
-    return;
-  }
+  const usedSvg = !!window.__USE_SVGS__ && drawSvg(ctx, "player", px, py, rot, t, 0.72 * pulse, bob);
 
   const cx = t.offsetX + (px + 0.5) * t.tileRender;
   const cy = t.offsetY + (py + 0.5) * t.tileRender;
   const radius = Math.max(4, t.tileRender * 0.18);
-  const heading = radius * 1.45;
-  const angle = dirToAngleRad(rot);
+  if (!usedSvg) {
+    const heading = radius * 1.45;
+    const angle = dirToAngleRad(rot);
 
+    ctx.save();
+    ctx.fillStyle = "#4fd1ff";
+    ctx.strokeStyle = "#0d2533";
+    ctx.lineWidth = Math.max(1.25, t.tileRender * 0.04);
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = Math.max(1.25, t.tileRender * 0.05);
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(angle) * heading, cy + Math.sin(angle) * heading);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  const barW = radius * 2.2;
+  const barH = Math.max(2, t.tileRender * 0.07);
+  const barX = cx - barW / 2;
+  const barY = cy - radius - barH - Math.max(2, t.tileRender * 0.08);
   ctx.save();
-  ctx.fillStyle = "#4fd1ff";
-  ctx.strokeStyle = "#0d2533";
-  ctx.lineWidth = Math.max(1.25, t.tileRender * 0.04);
-  ctx.beginPath();
-  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.strokeStyle = "#ffffff";
-  ctx.lineWidth = Math.max(1.25, t.tileRender * 0.05);
-  ctx.beginPath();
-  ctx.moveTo(cx, cy);
-  ctx.lineTo(cx + Math.cos(angle) * heading, cy + Math.sin(angle) * heading);
-  ctx.stroke();
+  ctx.fillStyle = "#2c2c2c";
+  ctx.fillRect(barX, barY, barW, barH);
+  ctx.fillStyle = fuelRatio > 0.4 ? "#50fa7b" : fuelRatio > 0.2 ? "#ffb86c" : "#ff5555";
+  ctx.fillRect(barX, barY, barW * fuelRatio, barH);
   ctx.restore();
 }
 
@@ -654,12 +667,7 @@ export function createRenderer(canvas: HTMLCanvasElement): RendererApi {
       }
     }
 
-    const snapshotWithPlayer: SnapshotWithOptionalPlayer = window.__PLAYER__
-      ? {
-          ...snapshot,
-          player: window.__PLAYER__,
-        }
-      : (snapshot as SnapshotWithOptionalPlayer);
+    const snapshotWithPlayer = snapshot as SnapshotWithOptionalPlayer;
     drawPlayerMarker(ctx, gridW, gridH, t, snapshotWithPlayer, snapshot.time.tick);
 
     // Ghost highlight on top

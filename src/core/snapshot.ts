@@ -32,11 +32,20 @@ export type SnapshotEntity = {
   readonly progress01?: number;
 };
 
+export type SnapshotPlayer = {
+  readonly x: number;
+  readonly y: number;
+  readonly fuel: number;
+  readonly maxFuel: number;
+  readonly rot?: Direction;
+};
+
 export type Snapshot = Readonly<{
   readonly grid: SnapshotGrid;
   readonly time: SnapshotTiming;
   readonly ore: ReadonlyArray<Readonly<SnapshotOreCell>>;
   readonly entities: ReadonlyArray<SnapshotEntity>;
+  readonly player?: SnapshotPlayer;
 }>;
 
 type SnapshotMap = {
@@ -56,6 +65,8 @@ type SnapshotSim = {
   readonly getPlacementSnapshot?: () => { tick?: unknown; tickCount?: unknown };
   readonly map?: SnapshotMap;
   readonly getMap?: () => SnapshotMap;
+  readonly player?: unknown;
+  readonly getPlayerSnapshot?: () => unknown;
 };
 
 type SnapshotState = Record<string, unknown>;
@@ -233,6 +244,53 @@ const createOreList = (map: SnapshotMap): ReadonlyArray<Readonly<SnapshotOreCell
   }
 
   return cells;
+};
+
+const toFiniteInt = (value: unknown): number | null => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return Math.floor(value);
+};
+
+const createPlayerSnapshot = (sim: SnapshotSim): SnapshotPlayer | undefined => {
+  let source: unknown = undefined;
+  if (typeof sim.getPlayerSnapshot === "function") {
+    try {
+      source = sim.getPlayerSnapshot();
+    } catch {
+      source = undefined;
+    }
+  }
+
+  if (source === undefined) {
+    source = sim.player;
+  }
+
+  if (!isObject(source)) {
+    return undefined;
+  }
+
+  const x = toFiniteInt((source as SnapshotState).x);
+  const y = toFiniteInt((source as SnapshotState).y);
+  const fuel = toFiniteInt((source as SnapshotState).fuel);
+  const maxFuel = toFiniteInt((source as SnapshotState).maxFuel);
+  const rawRot = (source as SnapshotState).rot;
+  const rot = rawRot === "N" || rawRot === "E" || rawRot === "S" || rawRot === "W"
+    ? rawRot
+    : undefined;
+  if (x === null || y === null || fuel === null || maxFuel === null) {
+    return undefined;
+  }
+
+  return {
+    x,
+    y,
+    fuel: fuel < 0 ? 0 : fuel,
+    maxFuel: maxFuel < 1 ? 1 : maxFuel,
+    ...(rot === undefined ? {} : { rot }),
+  };
 };
 
 const oreListCache = new WeakMap<object, ReadonlyArray<Readonly<SnapshotOreCell>>>();
@@ -457,6 +515,7 @@ export const createSnapshot = (sim: SnapshotSim): Snapshot => {
 
   const ore = map === undefined ? [] : getCachedOreList(map);
   const entities = sim.getAllEntities?.() ?? [];
+  const player = createPlayerSnapshot(sim);
 
   const snapshot: Snapshot = {
     grid: {
@@ -471,6 +530,7 @@ export const createSnapshot = (sim: SnapshotSim): Snapshot => {
     },
     ore,
     entities: entities.map(createEntitySnapshot),
+    ...(player === undefined ? {} : { player }),
   };
 
   deepFreezeSnapshot(snapshot);

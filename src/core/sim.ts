@@ -3,6 +3,7 @@ import {
   getDefinition,
   SIM_TICK_CADENCE_MS,
 } from "./registry";
+import type { GeneratedMap } from "./map";
 import type {
   Direction,
   EntityBase,
@@ -14,6 +15,7 @@ type CreateSimConfig = {
   width?: number;
   height?: number;
   seed?: number | string;
+  map?: GeneratedMap;
 };
 
 type EntityInit = {
@@ -78,10 +80,11 @@ const toEntityDescriptor = (
   return { kind, init: rest };
 };
 
-export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
+export const createSim = ({ width, height, seed, map }: CreateSimConfig = {}) => {
   const worldWidth = width ?? DEFAULT_WORLD_WIDTH;
   const worldHeight = height ?? DEFAULT_WORLD_HEIGHT;
   const worldSeed = seed ?? DEFAULT_WORLD_SEED;
+  const worldMap = map;
 
   if (!Number.isInteger(worldWidth) || worldWidth <= 0) {
     throw new RangeError("width must be a positive integer");
@@ -457,6 +460,8 @@ export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
         height: worldHeight,
         tick,
         tickCount,
+        map: worldMap,
+        getMap: (): GeneratedMap | undefined => worldMap,
         getEntitiesAt: getTickStartEntitiesAt,
         getEntityById: getTickStartEntityById,
         getAllEntities: getTickStartEntities,
@@ -532,6 +537,10 @@ export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
   const sim = {
     width: worldWidth,
     height: worldHeight,
+    map: worldMap,
+    getMap(): GeneratedMap | undefined {
+      return worldMap;
+    },
     pause(): void {
       paused = true;
     },
@@ -547,6 +556,9 @@ export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
     getEntitiesAt,
     getAllEntities,
     get paused(): boolean {
+      return paused;
+    },
+    isPaused(): boolean {
       return paused;
     },
     get tick(): number {
