@@ -569,11 +569,6 @@ export function createMap(width: number, height: number, seed: number | string):
         continue;
       }
 
-      if (occupantAt(candidate.to) !== undefined) {
-        outcomes[candidate.index] = makeTransferFailure("occupied-destination", candidate.from, candidate.to);
-        continue;
-      }
-
       occupants.delete(candidate.fromKey);
       occupants.set(candidate.toKey, kind);
       lastIngressTickByTile.set(candidate.toKey, currentTransferTick);
