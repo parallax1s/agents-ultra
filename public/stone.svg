@@ -1,8 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="200" height="200">
   <defs>
-    <filter id="shadow">
-      <feDropShadow dx="2" dy="4" stdDeviation="2" flood-color="#000" flood-opacity="0.5"/>
-    </filter>
+    
     <linearGradient id="stoneBase" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#b8ad9c"/>
       <stop offset="100%" stop-color="#7a7061"/>
@@ -12,7 +10,7 @@
       <stop offset="100%" stop-color="#938776"/>
     </linearGradient>
   </defs>
-  <g filter="url(#shadow)">
+  <g >
     <!-- Main chunky rock -->
     <path d="M 35 20 C 50 15, 65 25, 75 40 C 85 55, 80 75, 60 85 C 40 90, 20 80, 15 60 C 10 40, 20 25, 35 20 Z" fill="url(#stoneBase)" stroke="#4c4335" stroke-width="2"/>
     

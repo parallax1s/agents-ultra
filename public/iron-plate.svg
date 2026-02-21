@@ -1,8 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="200" height="200">
   <defs>
-    <filter id="shadow">
-      <feDropShadow dx="2" dy="4" stdDeviation="2" flood-color="#000" flood-opacity="0.5"/>
-    </filter>
+    
     <linearGradient id="ironDark" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#8a9ba8"/>
       <stop offset="100%" stop-color="#4f606e"/>
@@ -13,7 +11,7 @@
       <stop offset="100%" stop-color="#6f8190"/>
     </linearGradient>
   </defs>
-  <g filter="url(#shadow)" transform="rotate(-15 50 50)">
+  <g  transform="rotate(-15 50 50)">
     <!-- Bottom Ingot -->
     <rect x="25" y="45" width="55" height="30" rx="4" fill="url(#ironDark)" stroke="#2b3842" stroke-width="1"/>
     <!-- Bottom Ingot Highlight -->

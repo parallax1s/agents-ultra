@@ -1,11 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="200" height="200">
-  <defs>
-    <filter id="beltShadow">
-      <feDropShadow dx="0" dy="3" stdDeviation="2" flood-color="#000" flood-opacity="0.4"/>
-    </filter>
-  </defs>
+  
 
-  <g filter="url(#beltShadow)">
+  <g >
     <!-- Base Dark Rubber Belt -->
     <rect x="10" y="5" width="80" height="90" fill="#222222" />
     <rect x="18" y="5" width="64" height="90" fill="#2a2a2a" />

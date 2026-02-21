@@ -1,8 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="200" height="200">
   <defs>
-    <filter id="machineShadow">
-      <feDropShadow dx="2" dy="4" stdDeviation="3" flood-color="#000" flood-opacity="0.7"/>
-    </filter>
+    
     <linearGradient id="chassis" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#909b9f"/>
       <stop offset="100%" stop-color="#4a5255"/>
@@ -12,7 +10,7 @@
       <stop offset="100%" stop-color="#2a2a2a"/>
     </linearGradient>
   </defs>
-  <g filter="url(#machineShadow)">
+  <g >
     <!-- Base Chassis -->
     <rect x="10" y="10" width="80" height="80" rx="6" fill="url(#chassis)" stroke="#222" stroke-width="2"/>
     
@@ -48,6 +46,6 @@
     </g>
 
     <!-- Top Status Light -->
-    <circle cx="50" cy="22" r="4" fill="#3fcc45" filter="drop-shadow(0px 0px 3px #3fcc45)"/>
+    <circle cx="50" cy="22" r="4" fill="#3fcc45" />
   </g>
 </svg>

@@ -1,8 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="200" height="200">
   <defs>
-    <filter id="shadow">
-      <feDropShadow dx="2" dy="4" stdDeviation="2" flood-color="#000" flood-opacity="0.5"/>
-    </filter>
+    
     <linearGradient id="oreBase" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#607d8b"/>
       <stop offset="100%" stop-color="#263238"/>
@@ -12,7 +10,7 @@
       <stop offset="100%" stop-color="#546e7a"/>
     </linearGradient>
   </defs>
-  <g filter="url(#shadow)">
+  <g >
     <!-- Main rock clump -->
     <path d="M 45 20 L 70 25 L 85 55 L 75 80 L 40 85 L 15 65 L 20 35 Z" fill="url(#oreBase)" stroke="#1a2529" stroke-width="2"/>
     

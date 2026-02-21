@@ -1,11 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="200" height="200">
-  <defs>
-    <filter id="armShadow">
-      <feDropShadow dx="3" dy="4" stdDeviation="2" flood-color="#000" flood-opacity="0.5"/>
-    </filter>
-  </defs>
+  
 
-  <g filter="url(#armShadow)">
+  <g >
     <!-- Base Platform -->
     <rect x="25" y="65" width="50" height="25" rx="4" fill="#2d2d2d" stroke="#111" stroke-width="2"/>
     <polygon points="30,85 70,85 62,68 38,68" fill="#35a3d7" />

@@ -1,9 +1,7 @@
 
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="200" height="200">
   <defs>
-    <filter id="flaskShadow">
-      <feDropShadow dx="0" dy="5" stdDeviation="3" flood-color="#000" flood-opacity="0.6"/>
-    </filter>
+    
     <linearGradient id="redLiquid" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#ff3333"/>
       <stop offset="40%" stop-color="#cc0000"/>
@@ -16,7 +14,7 @@
       <stop offset="100%" stop-color="#ffffff" stop-opacity="0.3"/>
     </linearGradient>
   </defs>
-  <g filter="url(#flaskShadow)">
+  <g >
     <!-- Back of glass -->
     <path d="M35 25 h30 v15 l15 40 a5 5 0 0 1 -5 5 h-50 a5 5 0 0 1 -5 -5 l15 -40 v-15 Z" fill="#eef5f8" opacity="0.8"/>
     

@@ -1,8 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="200" height="200">
   <defs>
-    <filter id="panelShadow">
-      <feDropShadow dx="0" dy="3" stdDeviation="2" flood-color="#000" flood-opacity="0.6"/>
-    </filter>
+    
     <linearGradient id="solarCell" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#143452"/>
       <stop offset="100%" stop-color="#0a1d30"/>
@@ -13,7 +11,7 @@
       <stop offset="100%" stop-color="#ffffff" stop-opacity="0.1"/>
     </linearGradient>
   </defs>
-  <g filter="url(#panelShadow)">
+  <g >
     <!-- Outer Frame -->
     <rect x="10" y="10" width="80" height="80" rx="3" fill="#6d767a" stroke="#444" stroke-width="2"/>
     <rect x="14" y="14" width="72" height="72" fill="#222" />

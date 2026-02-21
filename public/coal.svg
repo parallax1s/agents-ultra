@@ -1,8 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="200" height="200">
   <defs>
-    <filter id="shadow">
-      <feDropShadow dx="2" dy="4" stdDeviation="2" flood-color="#000" flood-opacity="0.6"/>
-    </filter>
+    
     <linearGradient id="coalBase" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#3c3f41"/>
       <stop offset="100%" stop-color="#141516"/>
@@ -16,7 +14,7 @@
       <stop offset="100%" stop-color="#2c2e30"/>
     </linearGradient>
   </defs>
-  <g filter="url(#shadow)">
+  <g >
     <!-- Main Chunk -->
     <path d="M 40 25 L 75 30 L 85 60 L 65 85 L 25 75 L 15 45 Z" fill="url(#coalBase)" stroke="#09090a" stroke-width="2" stroke-linejoin="miter"/>
     

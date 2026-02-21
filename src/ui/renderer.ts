@@ -19,55 +19,36 @@ declare global {
 }
 
 const imageCache: Record<string, HTMLImageElement> = {};
-const canvasCache: Record<string, HTMLCanvasElement> = {};
 
-function getSvgCanvas(name: string, targetSize: number): HTMLCanvasElement | null {
-  // We want to rasterize standard SVG to an offscreen canvas.
-  // We should pick a resolution that avoids blurriness but bounds memory.
-  // e.g. targetSize * devicePixelRatio, capped
-  const pxRatio = typeof window !== "undefined" && window.devicePixelRatio ? window.devicePixelRatio : 1;
-  const desiredResolution = Math.min(1024, Math.max(64, Math.ceil(targetSize * pxRatio * 1.5))); // 1.5x buffer for rotation
-  const cacheKey = `${name}_${desiredResolution}`;
+function getSvg(name: string): HTMLImageElement | null {
+  if (imageCache[name]) return imageCache[name];
 
-  if (canvasCache[cacheKey]) return canvasCache[cacheKey];
-
-  if (!imageCache[name]) {
-    const img = new Image();
-    img.src = `/${name}.svg`;
-    imageCache[name] = img;
-  }
-
-  const img = imageCache[name];
-
-  if (!img.complete || img.naturalWidth === 0) {
-    return null;
-  }
-
-  // Rasterize at desiredResolution
-  const tempCanvas = document.createElement("canvas");
-  tempCanvas.width = desiredResolution;
-  tempCanvas.height = desiredResolution;
-  const ctx = tempCanvas.getContext("2d");
-  if (ctx) {
-    ctx.drawImage(img, 0, 0, desiredResolution, desiredResolution);
-  }
-
-  canvasCache[cacheKey] = tempCanvas;
-  return tempCanvas;
+  const img = new Image();
+  img.src = `/${name}.svg`;
+  imageCache[name] = img;
+  return img;
 }
 
 function drawSvg(ctx: CanvasRenderingContext2D, name: string, x: number, y: number, rot: Direction, t: Transform, fitScale = 1.0): boolean {
-  const size = t.tileRender * fitScale;
-  const cachedCanvas = getSvgCanvas(name, size);
-  if (!cachedCanvas || cachedCanvas.width === 0) return false;
+  const img = getSvg(name);
+  if (!img || !img.complete || img.naturalWidth === 0) return false;
 
+  const size = t.tileRender * fitScale;
   const cx = t.offsetX + (x + 0.5) * t.tileRender;
   const cy = t.offsetY + (y + 0.5) * t.tileRender;
 
   ctx.save();
   ctx.translate(cx, cy);
   ctx.rotate(dirToAngleRad(rot));
-  ctx.drawImage(cachedCanvas, -size / 2, -size / 2, size, size);
+
+  // Hardware-accelerated native drop shadow for SVGs
+  // (We stripped them from inside the SVGs to prevent browser performance armageddon)
+  ctx.shadowColor = "rgba(0, 0, 0, 0.5)";
+  ctx.shadowBlur = 4 * t.scale;
+  ctx.shadowOffsetX = 2 * t.scale;
+  ctx.shadowOffsetY = 4 * t.scale;
+
+  ctx.drawImage(img, -size / 2, -size / 2, size, size);
   ctx.restore();
   return true;
 }
@@ -246,12 +227,20 @@ function drawBelt(
   const items = parseBeltItems(itemHint);
   for (const it of items) {
     if (useSvgs) {
-      const iz = t.tileRender * 0.45;
-      const cachedCanvas = getSvgCanvas(it.kind, iz);
-      if (cachedCanvas && cachedCanvas.width > 0) {
+      const img = getSvg(it.kind);
+      if (img && img.complete && img.naturalWidth > 0) {
+        const iz = t.tileRender * 0.45;
         const ix = -t.tileRender * 0.25 + it.pos * (t.tileRender * 0.5);
         ctx.globalAlpha = 1.0;
-        ctx.drawImage(cachedCanvas, ix - iz / 2, -iz / 2, iz, iz);
+
+        ctx.save();
+        ctx.shadowColor = "rgba(0, 0, 0, 0.4)";
+        ctx.shadowBlur = 2 * t.scale;
+        ctx.shadowOffsetX = 1 * t.scale;
+        ctx.shadowOffsetY = 2 * t.scale;
+
+        ctx.drawImage(img, ix - iz / 2, -iz / 2, iz, iz);
+        ctx.restore();
         continue;
       }
     }
