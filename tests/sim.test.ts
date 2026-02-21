@@ -743,6 +743,63 @@ describe("simulation registry and loop", () => {
     expect(fineGrainedChunks).toEqual(singleChunk);
   });
 
+  test("keeps exact 60 TPS tick cadence deterministic across repeated chunking patterns", () => {
+    const kind = nextKind("miner-cadence-repeatability");
+    const tickMs = 1000 / 60;
+
+    registerEntity(kind, {
+      create: () => ({ updates: 0, checksum: 0 }),
+      update: (entity: unknown) => {
+        if (typeof entity !== "object" || entity === null || !("state" in entity) || !("pos" in entity)) {
+          throw new Error("Unexpected entity shape passed to update");
+        }
+
+        const typedEntity = entity as {
+          state?: { updates?: number; checksum?: number };
+          pos: { x: number; y: number };
+        };
+        if (typedEntity.state === undefined) {
+          typedEntity.state = { updates: 0, checksum: 0 };
+        }
+
+        const updates = (typedEntity.state.updates ?? 0) + 1;
+        typedEntity.state.updates = updates;
+        if (updates % 4 === 0) {
+          typedEntity.pos.x += 1;
+        }
+        typedEntity.state.checksum = (typedEntity.state.checksum ?? 0) + updates * 7 + typedEntity.pos.x * 13;
+      },
+    });
+
+    const runScenario = (
+      chunkFractionsInTwelfths: number[],
+    ): { tickCount: number; elapsedMs: number; world: WorldEntitySnapshot[] } => {
+      const sim = createSim({ width: 24, height: 24, seed: 77 });
+      sim.addEntity({ kind, pos: { x: 1, y: 1 } } as Parameters<typeof sim.addEntity>[0]);
+
+      for (const fraction of chunkFractionsInTwelfths) {
+        sim.step((fraction * tickMs) / 12);
+      }
+
+      return {
+        tickCount: sim.tickCount,
+        elapsedMs: sim.elapsedMs,
+        world: snapshotWorld(sim),
+      };
+    };
+
+    const baseline = runScenario([720]);
+    expect(baseline.tickCount).toBe(60);
+    expect(baseline.elapsedMs).toBeCloseTo(60 * tickMs, 6);
+
+    const chunked = runScenario([7, 11, 13, 19, 23, 29, 31, 37, 41, 47, 53, 409]);
+    expect(chunked).toEqual(baseline);
+
+    for (let run = 0; run < 5; run += 1) {
+      expect(runScenario([5, 7, 9, 11, 13, 17, 19, 23, 616])).toEqual(baseline);
+    }
+  });
+
   test("resolves sim-level movement contention deterministically from stable position ordering", () => {
     const tickMs = 1000 / 60;
     const kind = nextKind("sim-contender");
@@ -863,6 +920,75 @@ describe("simulation registry and loop", () => {
     expect(sim.tickCount).toBe(snapshotBeforePause.tickCount + 3);
     expect(sim.elapsedMs).toBeCloseTo(snapshotBeforePause.elapsedMs + tickMs * 3);
     expect(getUpdateCount(sim.getEntityById(id))).toBe(updatesBeforePause + 3);
+  });
+
+  test("maintains identical post-resume state across repeated pause/resume boundary runs", () => {
+    const kind = nextKind("miner-pause-resume-repeatability");
+    const tickMs = 1000 / 60;
+
+    registerEntity(kind, {
+      create: () => ({ updates: 0 }),
+      update: (entity: unknown) => {
+        if (typeof entity !== "object" || entity === null || !("state" in entity) || !("pos" in entity)) {
+          throw new Error("Unexpected entity shape passed to update");
+        }
+
+        const typedEntity = entity as {
+          state?: { updates?: number };
+          pos: { x: number; y: number };
+        };
+        const updates = (typedEntity.state?.updates ?? 0) + 1;
+        typedEntity.state = { ...(typedEntity.state ?? {}), updates };
+        if (updates % 2 === 0) {
+          typedEntity.pos.y += 1;
+        }
+      },
+    });
+
+    const runScenario = (): {
+      tickCount: number;
+      elapsedMs: number;
+      beforePause: WorldEntitySnapshot[];
+      duringPause: WorldEntitySnapshot[];
+      afterResume: WorldEntitySnapshot[];
+    } => {
+      const sim = createSim({ width: 16, height: 16, seed: 81 });
+      sim.addEntity({ kind, pos: { x: 1, y: 1 } } as Parameters<typeof sim.addEntity>[0]);
+
+      sim.step(tickMs * 4 + tickMs / 2);
+      const beforePause = snapshotWorld(sim);
+      const beforeTick = sim.tickCount;
+      const beforeElapsed = sim.elapsedMs;
+
+      sim.pause();
+      sim.step(tickMs * 30);
+      sim.step(tickMs / 5);
+      const duringPause = snapshotWorld(sim);
+      expect(sim.tickCount).toBe(beforeTick);
+      expect(sim.elapsedMs).toBe(beforeElapsed);
+      expect(duringPause).toEqual(beforePause);
+
+      sim.resume();
+      sim.step(tickMs / 2);
+      sim.step(3 * tickMs);
+
+      return {
+        tickCount: sim.tickCount,
+        elapsedMs: sim.elapsedMs,
+        beforePause,
+        duringPause,
+        afterResume: snapshotWorld(sim),
+      };
+    };
+
+    const first = runScenario();
+    const second = runScenario();
+    const third = runScenario();
+
+    expect(first).toEqual(second);
+    expect(first).toEqual(third);
+    expect(first.tickCount).toBe(8);
+    expect(first.elapsedMs).toBeCloseTo(8 * tickMs, 6);
   });
 
   test("enforces exact miner->belt->inserter->furnace cadence at 60/20/15/180 checkpoints", () => {

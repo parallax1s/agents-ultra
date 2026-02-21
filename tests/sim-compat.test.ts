@@ -693,6 +693,37 @@ describe("sim API compatibility", () => {
     expect((sim.getEntityById(id)?.state as { ticks?: number } | undefined)?.ticks).toBe(pausedTickCount + 1);
   });
 
+  it("keeps exact 60 TPS tick cadence deterministic across repeated legacy chunking patterns", () => {
+    ensureCompatDefinition();
+
+    const runScenario = (chunkFractionsInTwelfths: number[]): { ticks: number; tickCount: number; elapsedMs: number } => {
+      const sim = createSim({ width: 12, height: 12, seed: 31 });
+      const id = sim.addEntity(COMPAT_KIND, { pos: { x: 1, y: 1 } });
+
+      for (const fraction of chunkFractionsInTwelfths) {
+        sim.step((fraction * TICK_MS) / 12);
+      }
+
+      return {
+        ticks: (sim.getEntityById(id)?.state as { ticks?: number } | undefined)?.ticks ?? 0,
+        tickCount: sim.tickCount,
+        elapsedMs: sim.elapsedMs,
+      };
+    };
+
+    const baseline = runScenario([720]);
+    expect(baseline.ticks).toBe(60);
+    expect(baseline.tickCount).toBe(60);
+    expect(baseline.elapsedMs).toBeCloseTo(60 * TICK_MS, 6);
+
+    const chunked = runScenario([7, 11, 13, 19, 23, 29, 31, 37, 41, 47, 53, 409]);
+    expect(chunked).toEqual(baseline);
+
+    for (let run = 0; run < 5; run += 1) {
+      expect(runScenario([5, 7, 9, 11, 13, 17, 19, 23, 616])).toEqual(baseline);
+    }
+  });
+
   it("preserves move cadence through pause for legacy addEntity(kind, init) inputs", () => {
     const kind = nextKind("compat-legacy-move-pause");
 
@@ -758,6 +789,70 @@ describe("sim API compatibility", () => {
     };
 
     expect(runWithoutPause()).toEqual(runWithPause());
+  });
+
+  it("keeps paused ticks mutation-free and resumes from exact prior state in legacy mode", () => {
+    const kind = nextKind("compat-legacy-pause-resume-repeatability");
+
+    registerEntity(kind, {
+      create: () => ({ ticks: 0 }),
+      update: (entity) => {
+        const state = asState<{ ticks?: number }>(entity.state);
+        if (state === undefined) {
+          throw new Error("Expected entity state to be object");
+        }
+
+        state.ticks = (state.ticks ?? 0) + 1;
+        if (state.ticks % 2 === 0) {
+          entity.pos = { x: entity.pos.x, y: entity.pos.y + 1 };
+        }
+      },
+    });
+
+    const runScenario = (): {
+      tickCount: number;
+      elapsedMs: number;
+      beforePause: string;
+      duringPause: string;
+      afterResume: string;
+    } => {
+      const sim = createSim({ width: 12, height: 12, seed: 32 });
+      const id = sim.addEntity(kind, { pos: { x: 1, y: 1 } });
+
+      sim.step(TICK_MS * 4 + TICK_MS / 2);
+      const beforePause = JSON.stringify(sim.getEntityById(id));
+      const beforeTick = sim.tickCount;
+      const beforeElapsed = sim.elapsedMs;
+
+      sim.pause();
+      sim.step(TICK_MS * 20);
+      sim.step(TICK_MS / 5);
+      const duringPause = JSON.stringify(sim.getEntityById(id));
+      expect(sim.tickCount).toBe(beforeTick);
+      expect(sim.elapsedMs).toBe(beforeElapsed);
+      expect(duringPause).toBe(beforePause);
+
+      sim.resume();
+      sim.step(TICK_MS / 2);
+      sim.step(3 * TICK_MS);
+
+      return {
+        tickCount: sim.tickCount,
+        elapsedMs: sim.elapsedMs,
+        beforePause,
+        duringPause,
+        afterResume: JSON.stringify(sim.getEntityById(id)),
+      };
+    };
+
+    const first = runScenario();
+    const second = runScenario();
+    const third = runScenario();
+
+    expect(first).toEqual(second);
+    expect(first).toEqual(third);
+    expect(first.tickCount).toBe(8);
+    expect(first.elapsedMs).toBeCloseTo(8 * TICK_MS, 6);
   });
 
   it("rejects out-of-bounds placements with a clear error", () => {
