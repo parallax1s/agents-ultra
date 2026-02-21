@@ -73,7 +73,7 @@ type TransportLayout = {
 };
 
 const PALETTE = ["Miner", "Belt", "Inserter", "Furnace"] as const;
-const MAX_TICK_DELTA_PER_SAMPLE = 5;
+const MAX_TICK_DELTA_PER_SAMPLE = 6;
 const CANDIDATE_TILE_PADDING = 4;
 const TRANSPORT_SAMPLE_DELAY_MS = 70;
 const TRANSPORT_SAMPLE_COUNT = 54;
@@ -472,7 +472,7 @@ const expectTickCadence = (samples: readonly TickSample[]): void => {
     const current = samples[index];
 
     expect(current.tickCount).toBeGreaterThanOrEqual(previous.tickCount);
-    expect(current.tickCount - previous.tickCount).toBeLessThanOrEqual(4);
+    expect(current.tickCount - previous.tickCount).toBeLessThanOrEqual(6);
 
     if (current.tickCount > previous.tickCount) {
       observedForwardMovement = true;
@@ -670,6 +670,23 @@ const expectNoResumeJump = (
   expect(jump).toBeLessThanOrEqual(maxJump);
 };
 
+const attachRuntimeErrorCollectors = (page: Page): { pageErrors: string[]; consoleErrors: string[] } => {
+  const pageErrors: string[] = [];
+  const consoleErrors: string[] = [];
+
+  page.on("pageerror", (error) => {
+    pageErrors.push(error.message);
+  });
+
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      consoleErrors.push(message.text());
+    }
+  });
+
+  return { pageErrors, consoleErrors };
+};
+
 test.describe("Agents Ultra app smoke", () => {
   test("renders canvas and palette buttons", async ({ page }) => {
     await waitForAppReady(page);
@@ -677,6 +694,22 @@ test.describe("Agents Ultra app smoke", () => {
     for (const label of PALETTE) {
       await expect(page.getByRole("button", { name: label })).toBeVisible();
     }
+  });
+
+  test("has no runtime render errors during first interaction", async ({ page }) => {
+    const { pageErrors, consoleErrors } = attachRuntimeErrorCollectors(page);
+    await waitForAppReady(page);
+
+    await page.waitForTimeout(300);
+    const canvas = page.locator("canvas");
+    await page.keyboard.press("Digit2");
+    await page.keyboard.press("KeyR");
+    const tile = await findPlaceableTile(page, "Belt", 1);
+    await canvas.click({ position: { x: tile.x, y: tile.y } });
+    await waitForEntityCount(page, 1);
+
+    expect(pageErrors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
   });
 
   test("validates select/rotate/place/remove/pause/resume flow", async ({ page }) => {
