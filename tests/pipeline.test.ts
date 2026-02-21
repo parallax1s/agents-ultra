@@ -7,6 +7,7 @@ import {
   DIRECTION_SEQUENCE,
   DIRECTION_VECTORS,
   OPPOSITE_DIRECTION,
+  rotateDirection,
   type Direction,
   type EntityBase,
   type ItemKind,
@@ -27,6 +28,24 @@ const TEST_FURNACE_KIND = 'pipeline-test-furnace-c180';
 type Vec = { x: number; y: number };
 
 const add = (a: Vec, b: Vec): Vec => ({ x: a.x + b.x, y: a.y + b.y });
+
+type RelativeSide = 'front' | 'right' | 'back' | 'left';
+
+const sideToDirection = (facing: Direction, side: RelativeSide): Direction => {
+  if (side === 'front') {
+    return facing;
+  }
+
+  if (side === 'back') {
+    return OPPOSITE_DIRECTION[facing];
+  }
+
+  return side === 'right' ? rotateDirection(facing, 1) : rotateDirection(facing, -1);
+};
+
+const sideOffset = (facing: Direction, side: RelativeSide): Vec => {
+  return DIRECTION_VECTORS[sideToDirection(facing, side)];
+};
 
 type MinerState = {
   ticks: number;
@@ -1176,6 +1195,113 @@ describe('Transport cadence regressions', () => {
         advanceTo(40);
         expect(inserter.holding).toBeNull();
         expect(targetBelt.item).toBe(item);
+      }
+    }
+  });
+
+  it('keeps directional helpers aligned to canonical clockwise and opposite contracts', () => {
+    for (let i = 0; i < DIRECTION_SEQUENCE.length; i += 1) {
+      const facing = DIRECTION_SEQUENCE[i];
+      const expectedRight = DIRECTION_SEQUENCE[(i + 1) % DIRECTION_SEQUENCE.length];
+      const expectedBack = DIRECTION_SEQUENCE[(i + 2) % DIRECTION_SEQUENCE.length];
+      const expectedLeft = DIRECTION_SEQUENCE[(i + 3) % DIRECTION_SEQUENCE.length];
+
+      expect(rotateDirection(facing, 1)).toBe(expectedRight);
+      expect(rotateDirection(facing, 2)).toBe(expectedBack);
+      expect(rotateDirection(facing, -1)).toBe(expectedLeft);
+      expect(OPPOSITE_DIRECTION[facing]).toBe(expectedBack);
+
+      expect(sideToDirection(facing, 'front')).toBe(facing);
+      expect(sideToDirection(facing, 'right')).toBe(expectedRight);
+      expect(sideToDirection(facing, 'back')).toBe(expectedBack);
+      expect(sideToDirection(facing, 'left')).toBe(expectedLeft);
+    }
+  });
+
+  it('keeps miner, belt, and inserter side mappings consistent across all orientations', () => {
+    ensureTransportCadenceDefinitions();
+
+    const center: Vec = { x: 4, y: 4 };
+    for (let index = 0; index < DIRECTION_SEQUENCE.length; index += 1) {
+      const facing = DIRECTION_SEQUENCE[index];
+
+      {
+        const sim = createSim({ width: 10, height: 10, seed: 1200 + index });
+        const minerId = sim.addEntity({ kind: TEST_MINER_KIND, pos: center, rot: facing });
+        const frontId = sim.addEntity({ kind: TEST_BELT_KIND, pos: add(center, sideOffset(facing, 'front')), rot: facing });
+        const rightId = sim.addEntity({ kind: TEST_BELT_KIND, pos: add(center, sideOffset(facing, 'right')), rot: facing });
+        const backId = sim.addEntity({ kind: TEST_BELT_KIND, pos: add(center, sideOffset(facing, 'back')), rot: facing });
+        const leftId = sim.addEntity({ kind: TEST_BELT_KIND, pos: add(center, sideOffset(facing, 'left')), rot: facing });
+
+        const miner = getState<MinerState>(sim, minerId);
+        const front = getState<BeltState>(sim, frontId);
+        const right = getState<BeltState>(sim, rightId);
+        const back = getState<BeltState>(sim, backId);
+        const left = getState<BeltState>(sim, leftId);
+        miner.holding = 'iron-ore';
+
+        stepTicks(sim, MINER_ATTEMPT_TICKS);
+
+        expect(front.item).toBe('iron-ore');
+        expect(right.item).toBeNull();
+        expect(back.item).toBeNull();
+        expect(left.item).toBeNull();
+      }
+
+      {
+        const sim = createSim({ width: 10, height: 10, seed: 1300 + index });
+        const sourceId = sim.addEntity({ kind: TEST_BELT_KIND, pos: center, rot: facing });
+        const frontId = sim.addEntity({ kind: TEST_BELT_KIND, pos: add(center, sideOffset(facing, 'front')), rot: facing });
+        const rightId = sim.addEntity({ kind: TEST_BELT_KIND, pos: add(center, sideOffset(facing, 'right')), rot: facing });
+        const backId = sim.addEntity({ kind: TEST_BELT_KIND, pos: add(center, sideOffset(facing, 'back')), rot: facing });
+        const leftId = sim.addEntity({ kind: TEST_BELT_KIND, pos: add(center, sideOffset(facing, 'left')), rot: facing });
+
+        const source = getState<BeltState>(sim, sourceId);
+        const front = getState<BeltState>(sim, frontId);
+        const right = getState<BeltState>(sim, rightId);
+        const back = getState<BeltState>(sim, backId);
+        const left = getState<BeltState>(sim, leftId);
+
+        source.item = 'iron-plate';
+        stepTicks(sim, BELT_ATTEMPT_TICKS);
+
+        expect(source.item).toBeNull();
+        expect(front.item).toBe('iron-plate');
+        expect(right.item).toBeNull();
+        expect(back.item).toBeNull();
+        expect(left.item).toBeNull();
+      }
+
+      {
+        const sim = createSim({ width: 10, height: 10, seed: 1400 + index });
+        const inserterId = sim.addEntity({ kind: TEST_INSERTER_KIND, pos: center, rot: facing });
+        const frontId = sim.addEntity({ kind: TEST_BELT_KIND, pos: add(center, sideOffset(facing, 'front')), rot: facing });
+        const rightId = sim.addEntity({ kind: TEST_BELT_KIND, pos: add(center, sideOffset(facing, 'right')), rot: facing });
+        const backId = sim.addEntity({ kind: TEST_BELT_KIND, pos: add(center, sideOffset(facing, 'back')), rot: facing });
+        const leftId = sim.addEntity({ kind: TEST_BELT_KIND, pos: add(center, sideOffset(facing, 'left')), rot: facing });
+
+        const inserter = getState<InserterState>(sim, inserterId);
+        const front = getState<BeltState>(sim, frontId);
+        const right = getState<BeltState>(sim, rightId);
+        const back = getState<BeltState>(sim, backId);
+        const left = getState<BeltState>(sim, leftId);
+
+        front.item = null;
+        right.item = 'iron-plate';
+        back.item = 'iron-ore';
+        left.item = 'iron-plate';
+
+        stepTicks(sim, INSERTER_ATTEMPT_TICKS);
+        expect(inserter.holding).toBe('iron-ore');
+        expect(back.item).toBeNull();
+        expect(right.item).toBe('iron-plate');
+        expect(left.item).toBe('iron-plate');
+
+        stepTicks(sim, INSERTER_ATTEMPT_TICKS);
+        expect(inserter.holding).toBeNull();
+        expect(front.item).toBe('iron-ore');
+        expect(right.item).toBe('iron-plate');
+        expect(left.item).toBe('iron-plate');
       }
     }
   });

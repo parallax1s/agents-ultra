@@ -2,7 +2,15 @@ import { getDefinition, registerEntity } from "../src/core/registry";
 import { createSim } from "../src/core/sim";
 import { attachInput } from "../src/ui/input";
 import { createPlacementController, type Simulation } from "../src/ui/placement";
-import { rotateDirection, DIRECTION_SEQUENCE, type Direction, type EntityBase, type ItemKind } from "../src/core/types";
+import {
+  rotateDirection,
+  DIRECTION_SEQUENCE,
+  DIRECTION_VECTORS,
+  OPPOSITE_DIRECTION,
+  type Direction,
+  type EntityBase,
+  type ItemKind,
+} from "../src/core/types";
 import "../src/entities/all";
 
 let kindCounter = 0;
@@ -1435,6 +1443,31 @@ describe("simulation registry and loop", () => {
     expect(rotateDirection("E", 6)).toBe("W");
     expect(rotateDirection("W", -1)).toBe("S");
     expect(rotateDirection("S", -5)).toBe("E");
+  });
+
+  test("keeps direction vector and side-mapping helpers consistent for all four orientations", () => {
+    for (let i = 0; i < DIRECTION_SEQUENCE.length; i += 1) {
+      const facing = DIRECTION_SEQUENCE[i];
+      const right = DIRECTION_SEQUENCE[(i + 1) % DIRECTION_SEQUENCE.length];
+      const back = DIRECTION_SEQUENCE[(i + 2) % DIRECTION_SEQUENCE.length];
+      const left = DIRECTION_SEQUENCE[(i + 3) % DIRECTION_SEQUENCE.length];
+
+      expect(rotateDirection(facing, 1)).toBe(right);
+      expect(rotateDirection(facing, 2)).toBe(back);
+      expect(rotateDirection(facing, -1)).toBe(left);
+      expect(OPPOSITE_DIRECTION[facing]).toBe(back);
+
+      const frontVector = DIRECTION_VECTORS[facing];
+      const rightVector = DIRECTION_VECTORS[right];
+      const backVector = DIRECTION_VECTORS[back];
+      const leftVector = DIRECTION_VECTORS[left];
+
+      expect(frontVector.x + backVector.x).toBe(0);
+      expect(frontVector.y + backVector.y).toBe(0);
+      expect(rightVector.x + leftVector.x).toBe(0);
+      expect(rightVector.y + leftVector.y).toBe(0);
+      expect(Math.abs(frontVector.x * rightVector.x + frontVector.y * rightVector.y)).toBe(0);
+    }
   });
 
   test("keeps 60 TPS phase order stable across chunk patterns and pause/resume invariance", () => {
