@@ -120,7 +120,6 @@ function createRuntimeSimulation(): RuntimeSimulation {
     seed: WORLD_SEED,
   });
   const indexByTile = new Map<string, string>();
-  const tileByEntity = new Map<string, string>();
   let intervalId: number | null = null;
 
   const toKey = (tile: Tile): string => `${tile.x},${tile.y}`;
@@ -215,13 +214,16 @@ function createRuntimeSimulation(): RuntimeSimulation {
         return;
       }
 
-      const created = sim.addEntity(runtimeKind, {
-        pos: { x: tile.x, y: tile.y },
-        rot,
-      });
-      const tileKey = toKey(tile);
-      indexByTile.set(tileKey, created.id);
-      tileByEntity.set(created.id, tileKey);
+      try {
+        const createdId = sim.addEntity(runtimeKind, {
+          pos: { x: tile.x, y: tile.y },
+          rot,
+        });
+        const tileKey = toKey(tile);
+        indexByTile.set(tileKey, createdId);
+      } catch {
+        map.remove(tile);
+      }
     },
 
     removeEntity(tile) {
@@ -230,25 +232,18 @@ function createRuntimeSimulation(): RuntimeSimulation {
       if (!id) {
         return;
       }
-      const removed = sim.removeEntity(id);
-      if (removed === null) {
+      const removal = map.remove(tile);
+      if (!removal.ok) {
         return;
       }
 
-      const removal = map.remove(tile);
-      if (!removal.ok) {
-        sim.addEntity(removed.kind, {
-          pos: { x: removed.pos.x, y: removed.pos.y },
-          rot: removed.rot,
-          ...(typeof removed.state === 'object' && removed.state !== null
-            ? { ...(removed.state as Record<string, unknown>) }
-            : {}),
-        });
+      const removedFromSim = sim.removeEntity(id);
+      if (!removedFromSim) {
+        map.place(removal.removedKind, tile);
         return;
       }
 
       indexByTile.delete(tileKey);
-      tileByEntity.delete(id);
     },
 
     togglePause() {
