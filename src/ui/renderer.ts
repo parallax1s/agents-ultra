@@ -18,39 +18,51 @@ declare global {
   }
 }
 
-const imageCache: Record<string, HTMLCanvasElement> = {};
+const imageCache: Record<string, HTMLImageElement> = {};
+const canvasCache: Record<string, HTMLCanvasElement> = {};
 
-function getSvgCanvas(name: string): HTMLCanvasElement | null {
-  if (imageCache[name]) return imageCache[name];
+function getSvgCanvas(name: string, targetSize: number): HTMLCanvasElement | null {
+  // We want to rasterize standard SVG to an offscreen canvas.
+  // We should pick a resolution that avoids blurriness but bounds memory.
+  // e.g. targetSize * devicePixelRatio, capped
+  const pxRatio = typeof window !== "undefined" && window.devicePixelRatio ? window.devicePixelRatio : 1;
+  const desiredResolution = Math.min(1024, Math.max(64, Math.ceil(targetSize * pxRatio * 1.5))); // 1.5x buffer for rotation
+  const cacheKey = `${name}_${desiredResolution}`;
 
-  const img = new Image();
-  img.src = `/${name}.svg`;
+  if (canvasCache[cacheKey]) return canvasCache[cacheKey];
 
-  // We cannot draw it synchronously if it hasn't loaded. 
-  // We'll return null and cache a temporary canvas once it loads.
+  if (!imageCache[name]) {
+    const img = new Image();
+    img.src = `/${name}.svg`;
+    imageCache[name] = img;
+  }
+
+  const img = imageCache[name];
+
+  if (!img.complete || img.naturalWidth === 0) {
+    return null;
+  }
+
+  // Rasterize at desiredResolution
   const tempCanvas = document.createElement("canvas");
-  imageCache[name] = tempCanvas; // Store it immediately so we don't spam new Image()
+  tempCanvas.width = desiredResolution;
+  tempCanvas.height = desiredResolution;
+  const ctx = tempCanvas.getContext("2d");
+  if (ctx) {
+    ctx.drawImage(img, 0, 0, desiredResolution, desiredResolution);
+  }
 
-  img.onload = () => {
-    // SVGs in this project are 100x100 viewBox, 200x200 intrinsic. Rasterize at 200x200.
-    tempCanvas.width = 200;
-    tempCanvas.height = 200;
-    const ctx = tempCanvas.getContext("2d");
-    if (ctx) {
-      ctx.drawImage(img, 0, 0, 200, 200);
-    }
-  };
-
-  return tempCanvas.width > 0 ? tempCanvas : null;
+  canvasCache[cacheKey] = tempCanvas;
+  return tempCanvas;
 }
 
 function drawSvg(ctx: CanvasRenderingContext2D, name: string, x: number, y: number, rot: Direction, t: Transform, fitScale = 1.0): boolean {
-  const cachedCanvas = getSvgCanvas(name);
+  const size = t.tileRender * fitScale;
+  const cachedCanvas = getSvgCanvas(name, size);
   if (!cachedCanvas || cachedCanvas.width === 0) return false;
 
   const cx = t.offsetX + (x + 0.5) * t.tileRender;
   const cy = t.offsetY + (y + 0.5) * t.tileRender;
-  const size = t.tileRender * fitScale;
 
   ctx.save();
   ctx.translate(cx, cy);
@@ -234,9 +246,9 @@ function drawBelt(
   const items = parseBeltItems(itemHint);
   for (const it of items) {
     if (useSvgs) {
-      const cachedCanvas = getSvgCanvas(it.kind);
+      const iz = t.tileRender * 0.45;
+      const cachedCanvas = getSvgCanvas(it.kind, iz);
       if (cachedCanvas && cachedCanvas.width > 0) {
-        const iz = t.tileRender * 0.45;
         const ix = -t.tileRender * 0.25 + it.pos * (t.tileRender * 0.5);
         ctx.globalAlpha = 1.0;
         ctx.drawImage(cachedCanvas, ix - iz / 2, -iz / 2, iz, iz);
