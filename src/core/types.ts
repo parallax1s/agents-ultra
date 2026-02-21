@@ -55,3 +55,19 @@ export interface EntityBase {
   rot: Direction;
   state?: unknown;
 }
+
+export const STARTUP_PROBE_PHASES = [
+  "init",
+  "sim-ready",
+  "renderer-ready",
+  "input-ready",
+  "running",
+  "error",
+] as const;
+
+export type StartupProbePhase = (typeof STARTUP_PROBE_PHASES)[number];
+
+export type StartupProbeState = Readonly<{
+  phase: StartupProbePhase;
+  error?: string;
+}>;
