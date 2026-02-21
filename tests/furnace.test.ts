@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import { Furnace } from '../src/entities/furnace';
+import { FURNACE_INPUT_ITEM, FURNACE_OUTPUT_ITEM } from '../src/core/types';
 import { CANONICAL_TICK_PHASES } from '../src/core/registry';
 
 const FURNACE_SMELT_TICKS = 180;
 
 const startCraft = (furnace: Furnace): void => {
-  expect(furnace.acceptItem('iron-ore')).toBe(true);
+  expect(furnace.acceptItem(FURNACE_INPUT_ITEM)).toBe(true);
   furnace.update(0);
 };
 
@@ -41,8 +42,8 @@ const runFurnaceReplay = (): FurnaceReplayRun => {
       tick,
       input: furnace.input,
       output: furnace.output,
-      canAccept: furnace.canAcceptItem('iron-ore'),
-      canProvide: furnace.canProvideItem('iron-plate'),
+      canAccept: furnace.canAcceptItem(FURNACE_INPUT_ITEM),
+      canProvide: furnace.canProvideItem(FURNACE_OUTPUT_ITEM),
     });
   };
 
@@ -56,46 +57,46 @@ const runFurnaceReplay = (): FurnaceReplayRun => {
 
   capture('initial');
 
-  expect(furnace.canAcceptItem('iron-ore')).toBe(true);
+  expect(furnace.canAcceptItem(FURNACE_INPUT_ITEM)).toBe(true);
   startCraft(furnace);
   tick += 1;
   capture('first-load');
 
   advanceTo(180);
   capture('first-pre-completion');
-  expect(furnace.canProvideItem('iron-plate')).toBe(false);
+  expect(furnace.canProvideItem(FURNACE_OUTPUT_ITEM)).toBe(false);
 
   advanceTo(181);
   capture('first-completion');
-  expect(furnace.canProvideItem('iron-plate')).toBe(true);
-  expect(furnace.canAcceptItem('iron-ore')).toBe(false);
+  expect(furnace.canProvideItem(FURNACE_OUTPUT_ITEM)).toBe(true);
+  expect(furnace.canAcceptItem(FURNACE_INPUT_ITEM)).toBe(false);
 
   advanceTo(361);
   capture('first-output-held');
-  expect(furnace.canProvideItem('iron-plate')).toBe(true);
-  expect(furnace.canAcceptItem('iron-ore')).toBe(false);
+  expect(furnace.canProvideItem(FURNACE_OUTPUT_ITEM)).toBe(true);
+  expect(furnace.canAcceptItem(FURNACE_INPUT_ITEM)).toBe(false);
 
-  const firstProvide = furnace.provideItem('iron-plate');
+  const firstProvide = furnace.provideItem(FURNACE_OUTPUT_ITEM);
   capture('first-output-extracted');
-  expect(firstProvide).toBe('iron-plate');
-  expect(furnace.canAcceptItem('iron-ore')).toBe(true);
+  expect(firstProvide).toBe(FURNACE_OUTPUT_ITEM);
+  expect(furnace.canAcceptItem(FURNACE_INPUT_ITEM)).toBe(true);
 
   startCraft(furnace);
   tick += 1;
   capture('second-load');
-  expect(furnace.canAcceptItem('iron-ore')).toBe(false);
+  expect(furnace.canAcceptItem(FURNACE_INPUT_ITEM)).toBe(false);
 
   advanceTo(541);
   capture('second-pre-completion');
-  expect(furnace.canProvideItem('iron-plate')).toBe(false);
+  expect(furnace.canProvideItem(FURNACE_OUTPUT_ITEM)).toBe(false);
 
   advanceTo(542);
   capture('second-completion');
-  expect(furnace.canProvideItem('iron-plate')).toBe(true);
+  expect(furnace.canProvideItem(FURNACE_OUTPUT_ITEM)).toBe(true);
 
-  const secondProvide = furnace.provideItem('iron-plate');
+  const secondProvide = furnace.provideItem(FURNACE_OUTPUT_ITEM);
   capture('second-output-extracted');
-  expect(secondProvide).toBe('iron-plate');
+  expect(secondProvide).toBe(FURNACE_OUTPUT_ITEM);
 
   return { frames, firstProvide, secondProvide };
 };
@@ -224,8 +225,8 @@ describe('Furnace', () => {
       },
     ]);
 
-    expect(first.firstProvide).toBe('iron-plate');
-    expect(first.secondProvide).toBe('iron-plate');
+    expect(first.firstProvide).toBe(FURNACE_OUTPUT_ITEM);
+    expect(first.secondProvide).toBe(FURNACE_OUTPUT_ITEM);
   });
 
   it('holds blocked output deterministically, then resumes only after extraction at the next boundary', () => {
@@ -289,30 +290,33 @@ describe('Furnace', () => {
 
     runTicks(furnace, FURNACE_SMELT_TICKS * 3);
 
-    expect(furnace.canProvideItem('iron-plate')).toBe(false);
-    expect(furnace.provideItem('iron-plate')).toBeNull();
+    expect(furnace.canProvideItem(FURNACE_OUTPUT_ITEM)).toBe(false);
+    expect(furnace.provideItem(FURNACE_OUTPUT_ITEM)).toBeNull();
   });
 
-  it('rejects non-slice items deterministically and ignores them during processing', () => {
+  it('accepts only slice furnace input and emits only slice furnace output', () => {
     const furnace = new Furnace();
 
     expect(furnace.canAcceptItem('copper-ore')).toBe(false);
     expect(furnace.acceptItem('copper-ore')).toBe(false);
+    expect(furnace.canAcceptItem(FURNACE_OUTPUT_ITEM)).toBe(false);
+    expect(furnace.acceptItem(FURNACE_OUTPUT_ITEM)).toBe(false);
     expect(furnace.input).toBeNull();
     expect(furnace.output).toBeNull();
 
     runTicks(furnace, FURNACE_SMELT_TICKS * 2);
-    expect(furnace.canProvideItem('iron-plate')).toBe(false);
-    expect(furnace.provideItem('iron-plate')).toBeNull();
+    expect(furnace.canProvideItem(FURNACE_OUTPUT_ITEM)).toBe(false);
+    expect(furnace.provideItem(FURNACE_OUTPUT_ITEM)).toBeNull();
 
-    expect(furnace.acceptItem('iron-ore')).toBe(true);
+    expect(furnace.acceptItem(FURNACE_INPUT_ITEM)).toBe(true);
     furnace.update(0);
     runTicks(furnace, FURNACE_SMELT_TICKS - 1);
-    expect(furnace.canProvideItem('iron-plate')).toBe(false);
+    expect(furnace.canProvideItem(FURNACE_OUTPUT_ITEM)).toBe(false);
     runTicks(furnace, 1);
-    expect(furnace.canProvideItem('iron-plate')).toBe(true);
+    expect(furnace.canProvideItem(FURNACE_OUTPUT_ITEM)).toBe(true);
     expect(furnace.provideItem('copper-plate')).toBeNull();
-    expect(furnace.provideItem('iron-plate')).toBe('iron-plate');
+    expect(furnace.provideItem(FURNACE_INPUT_ITEM)).toBeNull();
+    expect(furnace.provideItem(FURNACE_OUTPUT_ITEM)).toBe(FURNACE_OUTPUT_ITEM);
   });
 
   it('smelts ore to plate after 180 ticks without any fuel gate', () => {

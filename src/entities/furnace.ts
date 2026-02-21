@@ -1,5 +1,4 @@
-import { getRecipeForInput } from '../recipes';
-import { isItemKind } from '../core/types';
+import { FURNACE_INPUT_ITEM, FURNACE_OUTPUT_ITEM, isItemKind } from '../core/types';
 
 export const FURNACE_TYPE = 'furnace';
 const FURNACE_SMELT_TICKS = 180;
@@ -8,13 +7,12 @@ export class Furnace {
   input: string | null = null;
   output: string | null = null;
   private crafting = false;
-  private recipeOutput: string | null = null;
   private smeltProgressTicks = 0;
 
   canAcceptItem(item: string): boolean {
     return (
       isItemKind(item) &&
-      getRecipeForInput(item) !== undefined &&
+      item === FURNACE_INPUT_ITEM &&
       this.input === null &&
       !this.crafting &&
       this.output === null
@@ -31,7 +29,7 @@ export class Furnace {
   }
 
   canProvideItem(item: string): boolean {
-    return isItemKind(item) && item === 'iron-plate' && this.output === 'iron-plate';
+    return isItemKind(item) && item === FURNACE_OUTPUT_ITEM && this.output === FURNACE_OUTPUT_ITEM;
   }
 
   provideItem(item: string): string | null {
@@ -49,12 +47,10 @@ export class Furnace {
       return;
     }
 
-    const recipe = getRecipeForInput(this.input);
-    if (recipe === undefined) {
+    if (this.input !== FURNACE_INPUT_ITEM) {
       return;
     }
 
-    this.recipeOutput = recipe.output;
     this.crafting = true;
     this.smeltProgressTicks = 0;
     this.input = null;
@@ -67,7 +63,6 @@ export class Furnace {
   private resetCraftingState(): void {
     this.crafting = false;
     this.smeltProgressTicks = 0;
-    this.recipeOutput = null;
   }
 
   update(_nowMs: number = 0): void {
@@ -90,13 +85,8 @@ export class Furnace {
       return;
     }
 
-    const completedOutput = this.recipeOutput;
     this.resetCraftingState();
-    if (completedOutput === null) {
-      return;
-    }
-
-    this.output = completedOutput;
+    this.output = FURNACE_OUTPUT_ITEM;
   }
 
   get inputOccupied(): boolean {

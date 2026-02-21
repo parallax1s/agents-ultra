@@ -40,6 +40,9 @@ export type ItemKind = 'iron-ore' | 'iron-plate';
 
 export const SLICE_ITEM_KINDS = ['iron-ore', 'iron-plate'] as const satisfies readonly ItemKind[];
 
+export const FURNACE_INPUT_ITEM = 'iron-ore' as const;
+export const FURNACE_OUTPUT_ITEM = 'iron-plate' as const;
+
 export const isItemKind = (value: string): value is ItemKind =>
   (SLICE_ITEM_KINDS as readonly string[]).includes(value);
 
