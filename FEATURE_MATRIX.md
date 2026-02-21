@@ -32,17 +32,15 @@ Status snapshot: `a0176a8`
   - Canonical contention handling covered in pipeline regression tests
 
 ## Programmatic Testability (Implemented)
-- Unit + integration tests with `vitest`
-- Browser flow smoke tests with `playwright`
-- Type safety gate with `tsc --noEmit`
-- Movement-focused regression gate:
-  - `npm run test:movement:regression`
-  - `npm run test:movement:e2e` (strict mode available)
-- Strict verification mode:
-  - `npm run test:strict`
+- Type safety gate: `npm run typecheck`
+- Build gate: `npm run build`
+- Maintenance/local regression gate: `npm run test`
+- Movement-focused deterministic regression gate: `npm run test:movement`
+- Optional movement smoke E2E gate: `npm run test:movement:e2e`
+- Strict verification mode: `npm run test:strict`
 
 ## Not Implemented / Missing
-- Fuel system / burner gameplay loop
+- Machine fuel and burner-power gameplay loops
 - Power network and power consumers/producers
 - Splitters and advanced logistics components
 - Player inventory/crafting UI
@@ -50,4 +48,5 @@ Status snapshot: `a0176a8`
 
 ## Notes
 - Current tests intentionally lock deterministic behavior for the implemented vertical slice.
+- Deferred systems above are intentionally out of scope for this slice and must not be used as QA failure criteria.
 - Future gameplay additions should always ship with matching regression tests in `tests/sim*.test.ts`, `tests/pipeline.test.ts`, and targeted `tests/e2e/*.spec.ts`.

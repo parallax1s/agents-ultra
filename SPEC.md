@@ -132,10 +132,17 @@ The following are intentionally out of scope and must not be required for "done"
 - Belt splitters
 - Belt mergers/prioritizers
 
-These can be layered later without breaking core contracts from this spec.
+These can be layered later without breaking core contracts from this spec. Their absence must not be treated as a QA regression for this vertical slice.
 
 ## Testing
 Testing is required with Vitest and should focus on deterministic simulation behavior.
+
+Validation command contract for this repository:
+- `npm run dev` for local Vite 6 development server.
+- `npm run build` for typecheck + production build validation.
+- `npm run test` for maintenance/local regression checks (skip-aware wrappers).
+- `npm run test:movement` for deterministic movement regression gating.
+- `npm run test:strict` for CI-style strict verification.
 
 Minimum expected unit-test coverage areas:
 - Tick stepping: fixed 60 TPS progression and pause/resume behavior.
