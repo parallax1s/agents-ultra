@@ -61,6 +61,9 @@ body {
 .palette {
   min-width: 196px;
   padding: 10px;
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
 }
 
 .palette-buttons,
@@ -69,6 +72,87 @@ body {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
+}
+
+.palette-probe {
+  margin: 0 0 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(154, 173, 200, 0.35);
+  padding: 4px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--hud-label);
+  background: rgba(24, 36, 53, 0.9);
+  transition: transform 180ms ease, opacity 180ms ease, width 200ms ease, padding 200ms ease;
+}
+
+[data-testid="palette-probe"][data-probe-state='startup'],
+[data-testid="palette-probe"][data-probe-state='error'] {
+  width: calc(100% - 20px);
+}
+
+[data-testid="palette-probe"][data-probe-state='running'],
+[data-testid="palette-probe"][data-probe-state='ready'] {
+  width: 78px;
+  padding-inline: 8px;
+  opacity: 0.75;
+}
+
+.palette-probe:where([data-probe-state='running']),
+.palette-probe:where([data-probe-state='ready']) {
+  justify-content: center;
+}
+
+.palette-probe .palette-probe-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--hud-accent);
+  box-shadow: 0 0 0 0 rgba(134, 246, 166, 0.45);
+  animation: palette-probe-tick 1.6s ease-in-out infinite;
+}
+
+.palette-probe[data-probe-state='startup'] .palette-probe-dot,
+.palette-probe[data-probe-state='error'] .palette-probe-dot {
+  background: #f0c04f;
+  animation: palette-probe-fade 1s ease-in-out infinite;
+}
+
+.palette-probe[data-probe-state='error'] {
+  border-color: rgba(255, 108, 108, 0.8);
+  color: rgba(255, 216, 216, 0.95);
+}
+
+@keyframes palette-probe-tick {
+  0% {
+    transform: scale(0.9);
+    box-shadow: 0 0 0 0 rgba(134, 246, 166, 0.45);
+  }
+
+  70% {
+    transform: scale(1.02);
+    box-shadow: 0 0 0 5px rgba(134, 246, 166, 0);
+  }
+
+  100% {
+    transform: scale(0.9);
+    box-shadow: 0 0 0 0 rgba(134, 246, 166, 0);
+  }
+}
+
+@keyframes palette-probe-fade {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+
+  50% {
+    opacity: 0.95;
+  }
 }
 
 .palette button,
