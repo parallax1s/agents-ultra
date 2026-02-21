@@ -11,6 +11,7 @@ This slice is centered on core placement interactions in a browser sandbox:
 - Move a player marker with `W` / `A` / `S` / `D`
 
 The current slice is intentionally limited and does not yet include full logistics/economy systems.
+For a full implemented-vs-missing snapshot, see `FEATURE_MATRIX.md`.
 
 ## Prerequisites
 - Node.js `20+`
@@ -145,6 +146,7 @@ npm run test
 
 ## Known Limitations
 - No power system yet
+- No fuel/refuel system yet (`F` action not implemented)
 - No splitters yet
 
 ## Troubleshooting
