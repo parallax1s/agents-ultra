@@ -369,9 +369,12 @@ test.describe("placement feedback e2e", () => {
 
     await page.waitForTimeout(140);
     const pausedTickOne = await readTickCount(page);
+    const pausedCountOne = await readEntityCount(page);
     await page.waitForTimeout(140);
     const pausedTickTwo = await readTickCount(page);
+    const pausedCountTwo = await readEntityCount(page);
     expect(pausedTickTwo).toBe(pausedTickOne);
+    expect(pausedCountTwo).toBe(pausedCountOne);
     expect(pausedTickOne).toBeGreaterThanOrEqual(beforePauseTick);
     expect(await hudTool.getAttribute("data-value")).toBe(beforePauseTool);
     expect(await hudRotation.getAttribute("data-value")).toBe(beforePauseRotation);
@@ -379,6 +382,9 @@ test.describe("placement feedback e2e", () => {
 
     await page.keyboard.press("Space");
     await expect(hudPause).toHaveAttribute("data-value", "running");
+    const resumedTickStart = await readTickCount(page);
+    expect(resumedTickStart).toBeGreaterThanOrEqual(pausedTickTwo);
+    expect(resumedTickStart - pausedTickTwo).toBeLessThanOrEqual(1);
     await expect.poll(async () => readTickCount(page)).toBeGreaterThan(pausedTickTwo);
     await waitForEntityCount(page, startEntityCount + 1);
   });
