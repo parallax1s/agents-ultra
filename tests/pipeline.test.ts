@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createSim } from '../src/core/sim';
 import { getDefinition, registerEntity } from '../src/core/registry';
+import '../src/entities/all';
 import {
   DIRECTION_SEQUENCE,
   DIRECTION_VECTORS,
@@ -77,6 +78,19 @@ type SharedTargetRaceState = {
   sourceWest: BeltState;
   sourceSouth: BeltState;
   sharedTarget: BeltState;
+};
+
+type CanonicalBeltState = {
+  tickPhase: number;
+  item: ItemKind | null;
+  items: [ItemKind | null];
+  buffer: ItemKind | null;
+};
+
+type CanonicalInserterState = {
+  tickPhase: number;
+  holding: ItemKind | null;
+  state: 0 | 1 | 2 | 3;
 };
 
 type SimWithGridLookup = {
@@ -394,6 +408,120 @@ const setupCustomInserterTransferScenario = (
   };
 
   return { sim, inserter, sourceBelt, targetBelt, advanceTo };
+};
+
+const countItems = (...items: Array<ItemKind | null | undefined>): number => {
+  return items.filter((item) => item === 'iron-ore' || item === 'iron-plate').length;
+};
+
+const runCanonicalBeltCapacityEdgeScenario = (): {
+  tick: number;
+  westItem: ItemKind | null;
+  southItem: ItemKind | null;
+  targetItem: ItemKind | null;
+  sinkItem: ItemKind | null;
+  totalItems: number;
+} => {
+  const sim = createSim({ width: 10, height: 5, seed: 910 });
+
+  const targetId = sim.addEntity({ kind: 'belt', pos: { x: 2, y: 2 }, rot: 'E' });
+  const sinkId = sim.addEntity({ kind: 'belt', pos: { x: 3, y: 2 }, rot: 'E' });
+  const westSourceId = sim.addEntity({ kind: 'belt', pos: { x: 1, y: 2 }, rot: 'E' });
+  const southSourceId = sim.addEntity({ kind: 'belt', pos: { x: 2, y: 3 }, rot: 'N' });
+
+  const target = getState<CanonicalBeltState>(sim, targetId);
+  const sink = getState<CanonicalBeltState>(sim, sinkId);
+  const westSource = getState<CanonicalBeltState>(sim, westSourceId);
+  const southSource = getState<CanonicalBeltState>(sim, southSourceId);
+
+  sink.item = 'iron-plate';
+  westSource.item = 'iron-ore';
+  southSource.item = 'iron-plate';
+  sink.buffer = sink.item;
+  sink.items = [sink.item];
+  westSource.buffer = westSource.item;
+  westSource.items = [westSource.item];
+  southSource.buffer = southSource.item;
+  southSource.items = [southSource.item];
+
+  stepTicks(sim, BELT_ATTEMPT_TICKS);
+
+  return {
+    tick: sim.tickCount,
+    westItem: westSource.item,
+    southItem: southSource.item,
+    targetItem: target.item,
+    sinkItem: sink.item,
+    totalItems: countItems(westSource.item, southSource.item, target.item, sink.item),
+  };
+};
+
+const runCanonicalInserterBlockedCadenceScenario = (): {
+  tick20: { tick: number; source: ItemKind | null; holding: ItemKind | null; target: ItemKind | null; total: number };
+  tick40: { tick: number; source: ItemKind | null; holding: ItemKind | null; target: ItemKind | null; total: number };
+  tick79: { tick: number; source: ItemKind | null; holding: ItemKind | null; target: ItemKind | null; total: number };
+  tick80: { tick: number; source: ItemKind | null; holding: ItemKind | null; target: ItemKind | null; total: number };
+} => {
+  const sim = createSim({ width: 10, height: 4, seed: 911 });
+
+  const sourceId = sim.addEntity({ kind: 'belt', pos: { x: 1, y: 1 }, rot: 'W' });
+  const inserterId = sim.addEntity({ kind: 'inserter', pos: { x: 2, y: 1 }, rot: 'E' });
+  const targetId = sim.addEntity({ kind: 'belt', pos: { x: 3, y: 1 }, rot: 'W' });
+
+  const source = getState<CanonicalBeltState>(sim, sourceId);
+  const inserter = getState<CanonicalInserterState>(sim, inserterId);
+  const target = getState<CanonicalBeltState>(sim, targetId);
+
+  source.item = 'iron-ore';
+  source.buffer = source.item;
+  source.items = [source.item];
+  target.item = 'iron-plate';
+  target.buffer = target.item;
+  target.items = [target.item];
+
+  stepTicks(sim, 20);
+  const tick20 = {
+    tick: sim.tickCount,
+    source: source.item,
+    holding: inserter.holding,
+    target: target.item,
+    total: countItems(source.item, inserter.holding, target.item),
+  };
+
+  source.item = 'iron-ore';
+  source.buffer = source.item;
+  source.items = [source.item];
+  stepTicks(sim, 20);
+  const tick40 = {
+    tick: sim.tickCount,
+    source: source.item,
+    holding: inserter.holding,
+    target: target.item,
+    total: countItems(source.item, inserter.holding, target.item),
+  };
+
+  target.item = null;
+  target.buffer = null;
+  target.items = [null];
+  stepTicks(sim, 39);
+  const tick79 = {
+    tick: sim.tickCount,
+    source: source.item,
+    holding: inserter.holding,
+    target: target.item,
+    total: countItems(source.item, inserter.holding, target.item),
+  };
+
+  stepTicks(sim, 1);
+  const tick80 = {
+    tick: sim.tickCount,
+    source: source.item,
+    holding: inserter.holding,
+    target: target.item,
+    total: countItems(source.item, inserter.holding, target.item),
+  };
+
+  return { tick20, tick40, tick79, tick80 };
 };
 
 describe('Transport cadence regressions', () => {
@@ -1086,5 +1214,82 @@ describe('Transport cadence regressions', () => {
         expect(targetBelt.item).toBe(item);
       }
     }
+  });
+
+  it('keeps canonical belt capacity at one item per tile under upstream contention', () => {
+    const first = runCanonicalBeltCapacityEdgeScenario();
+    const second = runCanonicalBeltCapacityEdgeScenario();
+
+    expect(first).toEqual(second);
+    expect(first.tick).toBe(15);
+    expect(first.totalItems).toBe(3);
+    expect(first.targetItem === 'iron-ore' || first.targetItem === 'iron-plate').toBe(true);
+    expect(first.westItem === null && first.southItem === null).toBe(false);
+  });
+
+  it('moves canonical belts only on 15-tick cadence and remains frozen while paused', () => {
+    const sim = createSim({ width: 8, height: 3, seed: 912 });
+
+    const sourceId = sim.addEntity({ kind: 'belt', pos: { x: 1, y: 1 }, rot: 'E' });
+    const targetId = sim.addEntity({ kind: 'belt', pos: { x: 2, y: 1 }, rot: 'E' });
+
+    const source = getState<CanonicalBeltState>(sim, sourceId);
+    const target = getState<CanonicalBeltState>(sim, targetId);
+    source.item = 'iron-ore';
+    source.buffer = source.item;
+    source.items = [source.item];
+
+    stepTicks(sim, 14);
+    expect(sim.tickCount).toBe(14);
+    expect(source).toMatchObject({ tickPhase: 14, item: 'iron-ore' });
+    expect(target).toMatchObject({ tickPhase: 14, item: null });
+
+    sim.pause();
+    stepTicks(sim, 30);
+    expect(sim.tickCount).toBe(14);
+    expect(source).toMatchObject({ tickPhase: 14, item: 'iron-ore' });
+    expect(target).toMatchObject({ tickPhase: 14, item: null });
+
+    sim.resume();
+    stepTicks(sim, 1);
+    expect(sim.tickCount).toBe(15);
+    expect(source).toMatchObject({ tickPhase: 15, item: null });
+    expect(target).toMatchObject({ tickPhase: 15, item: 'iron-ore' });
+  });
+
+  it('runs canonical inserter transfer on 20-tick cadence without dup/drop across blocked drops', () => {
+    const first = runCanonicalInserterBlockedCadenceScenario();
+    const second = runCanonicalInserterBlockedCadenceScenario();
+
+    expect(first).toEqual(second);
+
+    expect(first.tick20).toEqual({
+      tick: 20,
+      source: null,
+      holding: 'iron-ore',
+      target: 'iron-plate',
+      total: 2,
+    });
+    expect(first.tick40).toEqual({
+      tick: 40,
+      source: 'iron-ore',
+      holding: 'iron-ore',
+      target: 'iron-plate',
+      total: 3,
+    });
+    expect(first.tick79).toEqual({
+      tick: 79,
+      source: 'iron-ore',
+      holding: null,
+      target: 'iron-ore',
+      total: 2,
+    });
+    expect(first.tick80).toEqual({
+      tick: 80,
+      source: null,
+      holding: 'iron-ore',
+      target: 'iron-ore',
+      total: 2,
+    });
   });
 });
