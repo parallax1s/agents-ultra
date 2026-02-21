@@ -73,7 +73,7 @@ type TransportLayout = {
 };
 
 const PALETTE = ["Miner", "Belt", "Inserter", "Furnace"] as const;
-const MAX_TICK_DELTA_PER_SAMPLE = 6;
+const MAX_TICK_DELTA_PER_SAMPLE = 12;
 const CANDIDATE_TILE_PADDING = 4;
 const TRANSPORT_SAMPLE_DELAY_MS = 70;
 const TRANSPORT_SAMPLE_COUNT = 54;

@@ -16,7 +16,9 @@ type CanonicalTickKind = "miner" | "belt" | "inserter" | "furnace";
 
 type SimLike = {
   readonly getEntitiesAt?: (pos: GridCoord) => EntityBase[];
+  readonly getLiveEntitiesAt?: (pos: GridCoord) => EntityBase[];
   readonly getAllEntities?: () => EntityBase[];
+  readonly getLiveAllEntities?: () => EntityBase[];
   readonly tick?: number;
   readonly tickCount?: number;
   readonly map?: {
@@ -65,11 +67,14 @@ const getTickState = (sim: SimLike): TickPhaseState => {
 };
 
 const getEntitiesForTick = (sim: SimLike): EntityBase[] => {
-  if (typeof sim.getAllEntities !== "function") {
+  const getAll =
+    typeof sim.getLiveAllEntities === "function" ? sim.getLiveAllEntities : sim.getAllEntities;
+
+  if (typeof getAll !== "function") {
     return [];
   }
 
-  const allEntities = sim.getAllEntities();
+  const allEntities = getAll();
   return Array.isArray(allEntities) ? allEntities : [];
 };
 
@@ -192,11 +197,14 @@ const directionFromTo = (from: GridCoord, to: GridCoord): Direction | undefined 
 };
 
 const getEntitiesAt = (sim: SimLike, pos: GridCoord): EntityBase[] => {
-  if (typeof sim.getEntitiesAt !== "function") {
+  const getAt =
+    typeof sim.getLiveEntitiesAt === "function" ? sim.getLiveEntitiesAt : sim.getEntitiesAt;
+
+  if (typeof getAt !== "function") {
     return [];
   }
 
-  const entities = sim.getEntitiesAt(pos);
+  const entities = getAt(pos);
   if (!Array.isArray(entities)) {
     return [];
   }
@@ -800,7 +808,7 @@ const registerMiner = (): void => {
       output: null,
       light: "on",
     }),
-    tickPhase: CANONICAL_TICK_PHASES[0],
+    tickPhase: "miner",
     update: (_entity, dtMs, sim) => runCanonicalPhasesIfNeeded(dtMs, sim as SimLike),
   });
 };
@@ -817,7 +825,7 @@ const registerBelt = (): void => {
       items: [null],
       buffer: null,
     }),
-    tickPhase: CANONICAL_TICK_PHASES[1],
+    tickPhase: "belt",
     update: (_entity, dtMs, sim) => runCanonicalPhasesIfNeeded(dtMs, sim as SimLike),
   });
 };
@@ -833,7 +841,7 @@ const registerInserter = (): void => {
       holding: null,
       state: 0,
     }),
-    tickPhase: CANONICAL_TICK_PHASES[2],
+    tickPhase: "inserter",
     update: (_entity, dtMs, sim) => runCanonicalPhasesIfNeeded(dtMs, sim as SimLike),
   });
 };
@@ -845,7 +853,7 @@ const registerFurnace = (): void => {
 
   registerEntity(FURNACE_TYPE, {
     create: () => new Furnace(),
-    tickPhase: CANONICAL_TICK_PHASES[3],
+    tickPhase: "furnace",
     update: (_entity, dtMs, sim) => runCanonicalPhasesIfNeeded(dtMs, sim as SimLike),
   });
 };

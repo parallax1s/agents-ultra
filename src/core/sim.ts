@@ -448,12 +448,21 @@ export const createSim = ({ width, height, seed }: CreateSimConfig = {}) => {
         return Array.from(tickStartEntitySnapshotById.values());
       };
 
+      const getTickStartEntityById = (id: string): EntityBase | undefined => {
+        return tickStartEntitySnapshotById.get(id);
+      };
+
       const updateContext = {
         width: worldWidth,
         height: worldHeight,
+        tick,
+        tickCount,
         getEntitiesAt: getTickStartEntitiesAt,
-        getEntityById: getInternalEntityById,
+        getEntityById: getTickStartEntityById,
         getAllEntities: getTickStartEntities,
+        getLiveEntitiesAt: getInternalEntitiesAt,
+        getLiveEntityById: getInternalEntityById,
+        getLiveAllEntities: getInternalAllEntities,
       };
 
       for (const id of ids) {

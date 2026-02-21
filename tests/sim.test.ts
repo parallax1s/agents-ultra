@@ -952,7 +952,7 @@ describe("simulation registry and loop", () => {
     expect(furnaceState).toMatchObject({ crafting: false, output: "iron-plate", completed: 1 });
   });
 
-  test("keeps first cadence boundary item in middle tile for same-tick relay chains", () => {
+  test("relays custom chain payload on first shared cadence boundary deterministically", () => {
     const sourceKind = nextKind("pipeline-source-regression");
     const middleKind = nextKind("pipeline-middle-regression");
     const sinkKind = nextKind("pipeline-sink-regression");
@@ -1116,12 +1116,12 @@ describe("simulation registry and loop", () => {
     });
     expect(middleState).toMatchObject({
       ticks: 15,
-      holding: "iron-ore",
-      relayed: 0,
+      holding: null,
+      relayed: 1,
     });
     expect(sinkState).toMatchObject({
       ticks: 15,
-      holding: null,
+      holding: "iron-ore",
       received: 0,
     });
   });

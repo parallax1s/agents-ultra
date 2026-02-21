@@ -1337,7 +1337,7 @@ describe("sim API compatibility", () => {
     });
   });
 
-  it("keeps middle belt state for the full 15-tick cadence window", () => {
+  it("relays across custom belt chain deterministically on cadence boundaries", () => {
     const sourceBeltKind = nextKind("compat-belt-c15-source");
     const middleBeltKind = nextKind("compat-belt-c15-middle");
     const targetBeltKind = nextKind("compat-belt-c15-target");
@@ -1457,14 +1457,14 @@ describe("sim API compatibility", () => {
       ticks: 15,
     });
     expect(middleState).toMatchObject({
-      item: "iron-ore",
-      attempts: 0,
-      moved: 0,
+      item: null,
+      attempts: 1,
+      moved: 1,
       blocked: 0,
       ticks: 15,
     });
     expect(targetState).toMatchObject({
-      item: null,
+      item: "iron-ore",
       attempts: 0,
       moved: 0,
       blocked: 0,
