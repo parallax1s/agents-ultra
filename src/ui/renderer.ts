@@ -632,10 +632,12 @@ export function createRenderer(canvas: HTMLCanvasElement): RendererApi {
       }
     }
 
-    const snapshotWithPlayer = snapshot as SnapshotWithOptionalPlayer;
-    if (window.__PLAYER__) {
-      snapshotWithPlayer.player = window.__PLAYER__;
-    }
+    const snapshotWithPlayer: SnapshotWithOptionalPlayer = window.__PLAYER__
+      ? {
+          ...snapshot,
+          player: window.__PLAYER__,
+        }
+      : (snapshot as SnapshotWithOptionalPlayer);
     drawPlayerMarker(ctx, gridW, gridH, t, snapshotWithPlayer, snapshot.time.tick);
 
     // Ghost highlight on top
