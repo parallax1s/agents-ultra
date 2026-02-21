@@ -342,8 +342,9 @@ function pointerToTile(event: PointerEvent, canvas: HTMLCanvasElement): Tile | n
     return null;
   }
 
-  const canvasWidth = canvas.width > 0 ? canvas.width : rect.width;
-  const canvasHeight = canvas.height > 0 ? canvas.height : rect.height;
+  // Pointer coordinates are in CSS pixels, so use CSS-space viewport metrics here.
+  const canvasWidth = rect.width;
+  const canvasHeight = rect.height;
   const scale = Math.max(0.0001, Math.min(canvasWidth / worldW, canvasHeight / worldH));
   const tileSpan = TILE_SIZE * scale;
   const viewW = worldW * scale;
@@ -384,7 +385,7 @@ export default function App() {
   };
   const [selectedKind, setSelectedKind] = useState(null as EntityKind | null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
-  const [useSvgs, setUseSvgs] = useState(false);
+  const [useSvgs, setUseSvgs] = useState(true);
   const hudRef = useRef<HudState>(initialHud);
   if (hudRef.current === null) {
     hudRef.current = initialHud;
@@ -514,18 +515,30 @@ export default function App() {
       syncHudFromSimulation();
     };
 
+    // Default to SVG rendering so imported art is visible immediately.
+    window.__USE_SVGS__ = true;
+
     const resizeCanvas = (): void => {
       const width = Math.max(1, Math.floor(container.clientWidth));
       const height = Math.max(1, Math.floor(container.clientHeight));
+      const dpr =
+        typeof window.devicePixelRatio === 'number' && Number.isFinite(window.devicePixelRatio)
+          ? Math.min(1.5, Math.max(1, window.devicePixelRatio))
+          : 1;
+      const renderWidth = Math.max(1, Math.floor(width * dpr));
+      const renderHeight = Math.max(1, Math.floor(height * dpr));
 
-      if (canvas.width !== width) {
-        canvas.width = width;
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+
+      if (canvas.width !== renderWidth) {
+        canvas.width = renderWidth;
       }
-      if (canvas.height !== height) {
-        canvas.height = height;
+      if (canvas.height !== renderHeight) {
+        canvas.height = renderHeight;
       }
 
-      renderer.resize?.(width, height);
+      renderer.resize?.(renderWidth, renderHeight);
       syncGhostFromController();
     };
 
