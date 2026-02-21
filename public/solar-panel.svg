@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="200" height="200">
+  <defs>
+    <filter id="panelShadow">
+      <feDropShadow dx="0" dy="3" stdDeviation="2" flood-color="#000" flood-opacity="0.6"/>
+    </filter>
+    <linearGradient id="solarCell" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#143452"/>
+      <stop offset="100%" stop-color="#0a1d30"/>
+    </linearGradient>
+    <linearGradient id="glassGlare" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.4"/>
+      <stop offset="30%" stop-color="#ffffff" stop-opacity="0.0"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.1"/>
+    </linearGradient>
+  </defs>
+  <g filter="url(#panelShadow)">
+    <!-- Outer Frame -->
+    <rect x="10" y="10" width="80" height="80" rx="3" fill="#6d767a" stroke="#444" stroke-width="2"/>
+    <rect x="14" y="14" width="72" height="72" fill="#222" />
+    
+    <!-- Solar Cells Base -->
+    <rect x="16" y="16" width="68" height="68" fill="url(#solarCell)" />
+
+    <!-- Grid Pattern (Wiring) -->
+    <g stroke="#4f91c7" stroke-width="1.5" opacity="0.8">
+      <!-- Verticals -->
+      <line x1="33" y1="16" x2="33" y2="84" />
+      <line x1="50" y1="16" x2="50" y2="84" />
+      <line x1="67" y1="16" x2="67" y2="84" />
+      <!-- Horizontals -->
+      <line x1="16" y1="33" x2="84" y2="33" />
+      <line x1="16" y1="50" x2="84" y2="50" />
+      <line x1="16" y1="67" x2="84" y2="67" />
+    </g>
+
+    <!-- Cell Micro-lines (Texture) -->
+    <g stroke="#1e4d7a" stroke-width="0.5" opacity="0.6">
+      <line x1="24" y1="16" x2="24" y2="84" />
+      <line x1="41" y1="16" x2="41" y2="84" />
+      <line x1="58" y1="16" x2="58" y2="84" />
+      <line x1="75" y1="16" x2="75" y2="84" />
+    </g>
+
+    <!-- Overall Glass Reflection -->
+    <rect x="16" y="16" width="68" height="68" fill="url(#glassGlare)" />
+    
+    <!-- Diagonal Glare Line -->
+    <path d="M 16 40 L 40 16 L 48 16 L 16 48 Z" fill="#ffffff" opacity="0.15" />
+    <path d="M 16 60 L 60 16 L 65 16 L 16 65 Z" fill="#ffffff" opacity="0.08" />
+
+    <!-- Frame Corner Bolts -->
+    <circle cx="12.5" cy="12.5" r="1.5" fill="#aaa"/>
+    <circle cx="87.5" cy="12.5" r="1.5" fill="#aaa"/>
+    <circle cx="12.5" cy="87.5" r="1.5" fill="#aaa"/>
+    <circle cx="87.5" cy="87.5" r="1.5" fill="#aaa"/>
+  </g>
+</svg>

@@ -126,32 +126,32 @@ function createRuntimeSimulation(): RuntimeSimulation {
 
     getMap: () => map,
 
-      getAllEntities: () => Array.from(entities.values()),
+    getAllEntities: () => Array.from(entities.values()),
 
-      getPlacementSnapshot() {
-        return {
-          tick: runtime.tick,
-          tickCount: runtime.tickCount,
-          elapsedMs: runtime.elapsedMs,
-          entityCount: entities.size,
-        };
-      },
+    getPlacementSnapshot() {
+      return {
+        tick: runtime.tick,
+        tickCount: runtime.tickCount,
+        elapsedMs: runtime.elapsedMs,
+        entityCount: entities.size,
+      };
+    },
 
-      canRemove(tile) {
-        return indexByTile.has(toKey(tile));
-      },
+    canRemove(tile) {
+      return indexByTile.has(toKey(tile));
+    },
 
-      hasEntityAt(tile) {
-        return indexByTile.has(toKey(tile));
-      },
+    hasEntityAt(tile) {
+      return indexByTile.has(toKey(tile));
+    },
 
-      isResourceTile(tile) {
-        return map.isOre(tile.x, tile.y);
-      },
+    isResourceTile(tile) {
+      return map.isOre(tile.x, tile.y);
+    },
 
-      canPlace(kind, tile, _rotation) {
-        if (!inBounds(tile)) {
-          return false;
+    canPlace(kind, tile, _rotation) {
+      if (!inBounds(tile)) {
+        return false;
       }
 
       const tileKey = toKey(tile);
@@ -384,6 +384,7 @@ export default function App() {
   };
   const [selectedKind, setSelectedKind] = useState(null as EntityKind | null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [useSvgs, setUseSvgs] = useState(false);
   const hudRef = useRef<HudState>(initialHud);
   if (hudRef.current === null) {
     hudRef.current = initialHud;
@@ -721,6 +722,37 @@ export default function App() {
         <PaletteView selectedKind={selectedKind} onSelectKind={onPaletteSelect} />
       </div>
       <div
+        style={{
+          position: 'absolute',
+          top: 12,
+          right: 12,
+          zIndex: 1,
+        }}
+      >
+        <button
+          onClick={() => {
+            const current = !!window.__USE_SVGS__;
+            window.__USE_SVGS__ = !current;
+            setUseSvgs(!current);
+          }}
+          style={{
+            padding: '8px 16px',
+            borderRadius: 8,
+            border: 'none',
+            background: useSvgs ? '#228B22' : '#444',
+            color: 'white',
+            cursor: 'pointer',
+            fontFamily:
+              'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+            fontSize: 14,
+            fontWeight: 'bold',
+            boxShadow: '0 4px 6px rgba(0,0,0,0.3)',
+          }}
+        >
+          {useSvgs ? 'SVGs Enabled' : 'Enable SVGs'}
+        </button>
+      </div>
+      <div
         data-testid="hud"
         style={{
           position: 'absolute',
@@ -767,7 +799,7 @@ export default function App() {
         <div
           style={{
             position: 'absolute',
-            top: 12,
+            top: 60,
             right: 12,
             zIndex: 1,
             maxWidth: 260,
@@ -794,5 +826,6 @@ export default function App() {
 declare global {
   interface Window {
     __SIM__?: unknown;
+    __USE_SVGS__?: boolean;
   }
 }

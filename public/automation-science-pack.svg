@@ -1,0 +1,46 @@
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="200" height="200">
+  <defs>
+    <filter id="flaskShadow">
+      <feDropShadow dx="0" dy="5" stdDeviation="3" flood-color="#000" flood-opacity="0.6"/>
+    </filter>
+    <linearGradient id="redLiquid" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff3333"/>
+      <stop offset="40%" stop-color="#cc0000"/>
+      <stop offset="100%" stop-color="#660000"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.6"/>
+      <stop offset="20%" stop-color="#ffffff" stop-opacity="0.1"/>
+      <stop offset="80%" stop-color="#ffffff" stop-opacity="0.0"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.3"/>
+    </linearGradient>
+  </defs>
+  <g filter="url(#flaskShadow)">
+    <!-- Back of glass -->
+    <path d="M35 25 h30 v15 l15 40 a5 5 0 0 1 -5 5 h-50 a5 5 0 0 1 -5 -5 l15 -40 v-15 Z" fill="#eef5f8" opacity="0.8"/>
+    
+    <!-- Red Liquid -->
+    <!-- Starts partway down the cone -->
+    <path d="M 29 55 H 71 L 80 80 a5 5 0 0 1 -5 5 h-50 a5 5 0 0 1 -5 -5 L 29 55 Z" fill="url(#redLiquid)"/>
+    
+    <!-- Liquid Surface -->
+    <ellipse cx="50" cy="55" rx="21" ry="4" fill="#ff4d4d"/>
+    
+    <!-- Bubbles -->
+    <circle cx="40" cy="75" r="2.5" fill="#fff" opacity="0.6"/>
+    <circle cx="55" cy="65" r="1.5" fill="#fff" opacity="0.6"/>
+    <circle cx="60" cy="78" r="2" fill="#fff" opacity="0.6"/>
+    <circle cx="45" cy="60" r="1" fill="#fff" opacity="0.6"/>
+
+    <!-- Front Glass Reflection -->
+    <path d="M35 25 h30 v15 l15 40 a5 5 0 0 1 -5 5 h-50 a5 5 0 0 1 -5 -5 l15 -40 v-15 Z" fill="url(#glass)" stroke="#c3d9e6" stroke-width="2"/>
+    
+    <!-- Curved Glass Glare/Highlight -->
+    <path d="M 36 28 v10 l-12 35" stroke="#ffffff" stroke-width="4" stroke-linecap="round" fill="none" opacity="0.8"/>
+
+    <!-- Brass Stopper / Cap -->
+    <rect x="32" y="15" width="36" height="10" rx="2" fill="#d99f18" stroke="#8a630c" stroke-width="1.5"/>
+    <rect x="34" y="10" width="32" height="5" rx="1" fill="#e8bb4f"/>
+  </g>
+</svg>

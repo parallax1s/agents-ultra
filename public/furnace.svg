@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="200" height="200">
+  <defs>
+    <filter id="machineShadow">
+      <feDropShadow dx="2" dy="4" stdDeviation="3" flood-color="#000" flood-opacity="0.7"/>
+    </filter>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ff9900" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#ff3300" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="stoneBase" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#a0a0a0"/>
+      <stop offset="100%" stop-color="#4d4d4d"/>
+    </linearGradient>
+  </defs>
+  <g filter="url(#machineShadow)">
+    <!-- Base structure -->
+    <rect x="15" y="15" width="70" height="70" rx="8" fill="url(#stoneBase)" stroke="#333" stroke-width="2"/>
+    
+    <!-- Bricks detail -->
+    <rect x="25" y="25" width="20" height="10" fill="#7d7d7d" stroke="#333" stroke-width="1"/>
+    <rect x="55" y="25" width="20" height="10" fill="#7a7a7a" stroke="#333" stroke-width="1"/>
+    <rect x="20" y="45" width="25" height="10" fill="#888" stroke="#333" stroke-width="1"/>
+    <rect x="55" y="45" width="25" height="10" fill="#666" stroke="#333" stroke-width="1"/>
+    <rect x="35" y="65" width="30" height="10" fill="#707070" stroke="#333" stroke-width="1"/>
+
+    <!-- Flue/Chimney -->
+    <circle cx="50" cy="30" r="12" fill="#333" stroke="#222" stroke-width="2"/>
+    <circle cx="50" cy="30" r="8" fill="#111"/>
+
+    <!-- Furnace window bounds -->
+    <path d="M 35 60 L 65 60 L 70 85 L 30 85 Z" fill="#222" stroke="#333" stroke-width="2"/>
+    
+    <!-- Lava / Fire Glow -->
+    <circle cx="50" cy="78" r="16" fill="url(#glow)"/>
+    <path d="M 40 85 C 45 70, 55 70, 60 85" fill="none" stroke="#ffcc00" stroke-width="2"/>
+    <path d="M 45 85 C 48 76, 52 76, 55 85" fill="none" stroke="#ffffff" stroke-width="1.5"/>
+  </g>
+</svg>

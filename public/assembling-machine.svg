@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="200" height="200">
+  <defs>
+    <filter id="machineShadow">
+      <feDropShadow dx="2" dy="4" stdDeviation="3" flood-color="#000" flood-opacity="0.7"/>
+    </filter>
+    <linearGradient id="chassis" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#909b9f"/>
+      <stop offset="100%" stop-color="#4a5255"/>
+    </linearGradient>
+    <linearGradient id="core" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#111"/>
+      <stop offset="100%" stop-color="#2a2a2a"/>
+    </linearGradient>
+  </defs>
+  <g filter="url(#machineShadow)">
+    <!-- Base Chassis -->
+    <rect x="10" y="10" width="80" height="80" rx="6" fill="url(#chassis)" stroke="#222" stroke-width="2"/>
+    
+    <!-- Corner Mounts -->
+    <rect x="14" y="14" width="16" height="16" rx="2" fill="#333" />
+    <rect x="70" y="14" width="16" height="16" rx="2" fill="#333" />
+    <rect x="14" y="70" width="16" height="16" rx="2" fill="#333" />
+    <rect x="70" y="70" width="16" height="16" rx="2" fill="#333" />
+    
+    <circle cx="22" cy="22" r="3" fill="#888"/>
+    <circle cx="78" cy="22" r="3" fill="#888"/>
+    <circle cx="22" cy="78" r="3" fill="#888"/>
+    <circle cx="78" cy="78" r="3" fill="#888"/>
+
+    <!-- Input / Output Pipes -->
+    <rect x="40" y="6" width="20" height="8" fill="#555" stroke="#222" stroke-width="1"/>
+    <rect x="40" y="86" width="20" height="8" fill="#555" stroke="#222" stroke-width="1"/>
+    <rect x="6" y="40" width="8" height="20" fill="#555" stroke="#222" stroke-width="1"/>
+    <rect x="86" y="40" width="8" height="20" fill="#555" stroke="#222" stroke-width="1"/>
+
+    <!-- Central Hub Border -->
+    <circle cx="50" cy="50" r="28" fill="#555" stroke="#222" stroke-width="2"/>
+    <circle cx="50" cy="50" r="22" fill="url(#core)"/>
+
+    <!-- Internal Processing Gear -->
+    <g transform="rotate(22.5 50 50)" fill="#d99f18">
+      <rect x="46" y="32" width="8" height="36" rx="1"/>
+      <rect x="46" y="32" width="8" height="36" rx="1" transform="rotate(45 50 50)"/>
+      <rect x="46" y="32" width="8" height="36" rx="1" transform="rotate(90 50 50)"/>
+      <rect x="46" y="32" width="8" height="36" rx="1" transform="rotate(135 50 50)"/>
+      <circle cx="50" cy="50" r="12" fill="#d99f18"/>
+      <circle cx="50" cy="50" r="6" fill="#111"/>
+    </g>
+
+    <!-- Top Status Light -->
+    <circle cx="50" cy="22" r="4" fill="#3fcc45" filter="drop-shadow(0px 0px 3px #3fcc45)"/>
+  </g>
+</svg>

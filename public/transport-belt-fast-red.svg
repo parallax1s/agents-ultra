@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="200" height="200">
+  <defs>
+    <filter id="beltShadow">
+      <feDropShadow dx="0" dy="3" stdDeviation="2" flood-color="#000" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#beltShadow)">
+    <!-- Base Dark Rubber Belt -->
+    <rect x="10" y="5" width="80" height="90" fill="#222222" />
+    <rect x="18" y="5" width="64" height="90" fill="#2a2a2a" />
+    
+    <!-- Belt Texture / Segment Lines -->
+    <g stroke="#1a1a1a" stroke-width="2" opacity="0.5">
+      <line x1="18" y1="15" x2="82" y2="15" />
+      <line x1="18" y1="35" x2="82" y2="35" />
+      <line x1="18" y1="55" x2="82" y2="55" />
+      <line x1="18" y1="75" x2="82" y2="75" />
+      <line x1="18" y1="95" x2="82" y2="95" />
+    </g>
+
+    <!-- Movement Arrows -->
+    <g fill="none" stroke="#d63131" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M 30 40 L 50 20 L 70 40" />
+      <path d="M 30 70 L 50 50 L 70 70" />
+    </g>
+
+    <!-- Left Red Housing -->
+    <rect x="5" y="5" width="14" height="90" rx="2" fill="#c42828" stroke="#7e1717" stroke-width="1"/>
+    <!-- Right Red Housing -->
+    <rect x="81" y="5" width="14" height="90" rx="2" fill="#c42828" stroke="#7e1717" stroke-width="1"/>
+
+    <!-- Housing Rollers / Mechanisms (using dasharray) -->
+    <line x1="12" y1="10" x2="12" y2="90" stroke="#444" stroke-width="8" stroke-dasharray="4 6" />
+    <line x1="88" y1="10" x2="88" y2="90" stroke="#444" stroke-width="8" stroke-dasharray="4 6" />
+  </g>
+</svg>

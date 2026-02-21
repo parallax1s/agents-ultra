@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="200" height="200">
+  <defs>
+    <filter id="shadow">
+      <feDropShadow dx="2" dy="4" stdDeviation="2" flood-color="#000" flood-opacity="0.5"/>
+    </filter>
+    <linearGradient id="steelDark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#a6afb8"/>
+      <stop offset="100%" stop-color="#555d66"/>
+    </linearGradient>
+    <linearGradient id="steelLight" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#d3dae0"/>
+      <stop offset="50%" stop-color="#b8c2cc"/>
+      <stop offset="100%" stop-color="#7e8996"/>
+    </linearGradient>
+  </defs>
+  <g filter="url(#shadow)" transform="rotate(-20 50 50)">
+    <!-- Bottom Ingot -->
+    <rect x="15" y="45" width="70" height="25" rx="2" fill="url(#steelDark)" stroke="#3e444a" stroke-width="1"/>
+    <!-- Bottom Ingot Highlight -->
+    <path d="M 17 47 L 83 47" stroke="#e1e6eb" stroke-width="2" stroke-linecap="round"/>
+    
+    <!-- Middle Ingot -->
+    <rect x="10" y="32" width="70" height="25" rx="2" fill="url(#steelDark)" stroke="#3e444a" stroke-width="1"/>
+    <path d="M 12 34 L 78 34" stroke="#e1e6eb" stroke-width="2" stroke-linecap="round"/>
+    
+    <!-- Top Ingot -->
+    <rect x="5" y="20" width="70" height="25" rx="2" fill="url(#steelLight)" stroke="#535b63" stroke-width="1"/>
+    <!-- Top Ingot Glare -->
+    <path d="M 7 22 L 73 22" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round"/>
+    <path d="M 7 24 L 7 43" stroke="#ffffff" stroke-width="1" stroke-linecap="round"/>
+
+    <!-- Steel Strappings / Bands -->
+    <!-- Left Band -->
+    <rect x="25" y="19" width="4" height="52" fill="#2d3338" stroke="#16191c" stroke-width="0.5"/>
+    <rect x="26" y="20" width="2" height="50" fill="#58636b"/>
+    <!-- Right Band -->
+    <rect x="60" y="19" width="4" height="52" fill="#2d3338" stroke="#16191c" stroke-width="0.5"/>
+    <rect x="61" y="20" width="2" height="50" fill="#58636b"/>
+  </g>
+</svg>

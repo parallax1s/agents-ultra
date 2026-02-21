@@ -11,6 +11,40 @@
 import { createSnapshot, type Snapshot } from "../core/snapshot";
 import type { Direction, EntityKind, ItemKind } from "../core/types";
 
+declare global {
+  interface Window {
+    __SIM__?: unknown;
+    __USE_SVGS__?: boolean;
+  }
+}
+
+const imageCache: Record<string, HTMLImageElement> = {};
+
+function getSvg(name: string): HTMLImageElement {
+  if (imageCache[name]) return imageCache[name];
+  // Note: standard item SVGs map directly, some entities have specific names
+  const img = new Image();
+  img.src = `/${name}.svg`;
+  imageCache[name] = img;
+  return img;
+}
+
+function drawSvg(ctx: CanvasRenderingContext2D, name: string, x: number, y: number, rot: Direction, t: Transform, fitScale = 1.0): boolean {
+  const img = getSvg(name);
+  if (!img.complete || img.naturalWidth === 0) return false;
+
+  const cx = t.offsetX + (x + 0.5) * t.tileRender;
+  const cy = t.offsetY + (y + 0.5) * t.tileRender;
+  const size = t.tileRender * fitScale;
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(dirToAngleRad(rot));
+  ctx.drawImage(img, -size / 2, -size / 2, size, size);
+  ctx.restore();
+  return true;
+}
+
 type Tile = { x: number; y: number };
 
 // Colors
@@ -98,8 +132,12 @@ function fillTile(ctx: CanvasRenderingContext2D, x: number, y: number, color: st
 }
 
 function drawOre(ctx: CanvasRenderingContext2D, ore: ReadonlyArray<{ x: number; y: number }>, t: Transform): void {
+  const useSvgs = !!window.__USE_SVGS__;
   ctx.save();
   for (const cell of ore) {
+    if (useSvgs && drawSvg(ctx, "iron-ore", cell.x, cell.y, "N", t, 1.0)) {
+      continue;
+    }
     fillTile(ctx, cell.x, cell.y, ORE_COLOR, t);
   }
   ctx.restore();
@@ -121,6 +159,7 @@ function drawGhost(ctx: CanvasRenderingContext2D, ghost: { tile: Tile | null; va
 }
 
 function drawMiner(ctx: CanvasRenderingContext2D, x: number, y: number, rot: Direction, t: Transform): void {
+  if (!!window.__USE_SVGS__ && drawSvg(ctx, "miner", x, y, rot, t, 1.0)) return;
   const cx = t.offsetX + (x + 0.5) * t.tileRender;
   const cy = t.offsetY + (y + 0.5) * t.tileRender;
   const r = (t.tileRender * 0.8) / 2;
@@ -145,30 +184,51 @@ function drawBelt(
   itemHint: ReadonlyArray<ItemKind | null> | undefined,
   t: Transform,
 ): void {
-  // Base belt body
+  const useSvgs = !!window.__USE_SVGS__;
   const px = t.offsetX + x * t.tileRender;
   const py = t.offsetY + y * t.tileRender;
-  const pad = t.tileRender * 0.15;
-  ctx.save();
-  ctx.fillStyle = BELT_COLOR;
-  ctx.fillRect(px + pad, py + pad, t.tileRender - 2 * pad, t.tileRender - 2 * pad);
 
-  // Direction arrow
-  const cx = px + t.tileRender / 2;
-  const cy = py + t.tileRender / 2;
-  ctx.translate(cx, cy);
-  ctx.rotate(dirToAngleRad(rot));
-  ctx.fillStyle = "#2b2f3a";
-  ctx.beginPath();
-  ctx.moveTo(-t.tileRender * 0.18, -t.tileRender * 0.12);
-  ctx.lineTo(t.tileRender * 0.18, 0);
-  ctx.lineTo(-t.tileRender * 0.18, t.tileRender * 0.12);
-  ctx.closePath();
-  ctx.fill();
+  if (useSvgs && drawSvg(ctx, "transport-belt-basic-yellow", x, y, rot, t, 1.0)) {
+    ctx.save();
+    const cx = px + t.tileRender / 2;
+    const cy = py + t.tileRender / 2;
+    ctx.translate(cx, cy);
+    ctx.rotate(dirToAngleRad(rot));
+  } else {
+    // Base belt body
+    const pad = t.tileRender * 0.15;
+    ctx.save();
+    ctx.fillStyle = BELT_COLOR;
+    ctx.fillRect(px + pad, py + pad, t.tileRender - 2 * pad, t.tileRender - 2 * pad);
+
+    // Direction arrow
+    const cx = px + t.tileRender / 2;
+    const cy = py + t.tileRender / 2;
+    ctx.translate(cx, cy);
+    ctx.rotate(dirToAngleRad(rot));
+    ctx.fillStyle = "#2b2f3a";
+    ctx.beginPath();
+    ctx.moveTo(-t.tileRender * 0.18, -t.tileRender * 0.12);
+    ctx.lineTo(t.tileRender * 0.18, 0);
+    ctx.lineTo(-t.tileRender * 0.18, t.tileRender * 0.12);
+    ctx.closePath();
+    ctx.fill();
+  }
 
   // Items on belt (read from committed snapshot slot list)
   const items = parseBeltItems(itemHint);
   for (const it of items) {
+    if (useSvgs) {
+      const img = getSvg(it.kind);
+      if (img.complete && img.naturalWidth > 0) {
+        const iz = t.tileRender * 0.45;
+        const ix = -t.tileRender * 0.25 + it.pos * (t.tileRender * 0.5);
+        ctx.globalAlpha = 1.0;
+        ctx.drawImage(img, ix - iz / 2, -iz / 2, iz, iz);
+        continue;
+      }
+    }
+
     const color = it.kind === "iron-ore" ? ITEM_ORE : it.kind === "iron-plate" ? ITEM_PLATE : ITEM_GENERIC;
     const ix = -t.tileRender * 0.25 + it.pos * (t.tileRender * 0.5);
     ctx.fillStyle = color;
@@ -189,6 +249,8 @@ function drawInserter(
   t: Transform,
   timeTick: number,
 ): void {
+  if (!!window.__USE_SVGS__ && drawSvg(ctx, "basic-inserter", x, y, rot, t, 1.0)) return;
+
   const baseX = t.offsetX + (x + 0.5) * t.tileRender;
   const baseY = t.offsetY + (y + 0.5) * t.tileRender;
   ctx.save();
@@ -214,19 +276,27 @@ function drawInserter(
 }
 
 function drawFurnace(ctx: CanvasRenderingContext2D, x: number, y: number, progress: number | null, t: Transform): void {
+  const useSvgs = !!window.__USE_SVGS__;
   const px = t.offsetX + x * t.tileRender;
   const py = t.offsetY + y * t.tileRender;
-  ctx.save();
-  // body
-  ctx.fillStyle = FURNACE_COLOR;
-  ctx.fillRect(px + 2, py + 2, Math.ceil(t.tileRender) - 4, Math.ceil(t.tileRender) - 4);
 
-  // progress bar (bottom)
+  if (!useSvgs || !drawSvg(ctx, "furnace", x, y, "N", t, 1.0)) {
+    ctx.save();
+    // body
+    ctx.fillStyle = FURNACE_COLOR;
+    ctx.fillRect(px + 2, py + 2, Math.ceil(t.tileRender) - 4, Math.ceil(t.tileRender) - 4);
+    ctx.restore();
+  }
+
+  // progress bar (bottom) overlay always drawn
+  ctx.save();
   const frac = progress !== null ? clamp01(progress) : 0;
-  const barW = (Math.ceil(t.tileRender) - 6) * frac;
-  const barH = Math.max(3, Math.floor(t.tileRender * 0.12));
-  ctx.fillStyle = frac > 0 ? "#ffe082" : "#444";
-  ctx.fillRect(px + 3, py + Math.ceil(t.tileRender) - barH - 3, barW, barH);
+  if (frac > 0 || !useSvgs) {
+    const barW = (Math.ceil(t.tileRender) - 6) * frac;
+    const barH = Math.max(3, Math.floor(t.tileRender * 0.12));
+    ctx.fillStyle = frac > 0 ? "#ffe082" : "#444";
+    ctx.fillRect(px + 3, py + Math.ceil(t.tileRender) - barH - 3, barW, barH);
+  }
   ctx.restore();
 }
 
@@ -286,11 +356,6 @@ type RendererApi = {
   destroy(): void;
 };
 
-declare global {
-  interface Window {
-    __SIM__?: unknown;
-  }
-}
 
 const toBoundaryCounter = (value: unknown): number | null => {
   if (typeof value !== "number" || !Number.isFinite(value)) {

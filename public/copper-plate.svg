@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="200" height="200">
+  <defs>
+    <filter id="shadow">
+      <feDropShadow dx="2" dy="4" stdDeviation="2" flood-color="#000" flood-opacity="0.5"/>
+    </filter>
+    <linearGradient id="copperDark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#b85533"/>
+      <stop offset="100%" stop-color="#732f17"/>
+    </linearGradient>
+    <linearGradient id="copperLight" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#eb7d54"/>
+      <stop offset="50%" stop-color="#d96a3d"/>
+      <stop offset="100%" stop-color="#a64824"/>
+    </linearGradient>
+  </defs>
+  <g filter="url(#shadow)" transform="rotate(-15 50 50)">
+    <!-- Bottom Ingot -->
+    <rect x="25" y="45" width="55" height="30" rx="4" fill="url(#copperDark)" stroke="#4a1a09" stroke-width="1"/>
+    <!-- Bottom Ingot Highlight -->
+    <path d="M 27 47 L 78 47" stroke="#e88964" stroke-width="1.5" stroke-linecap="round"/>
+    
+    <!-- Middle Ingot -->
+    <rect x="18" y="32" width="55" height="30" rx="4" fill="url(#copperDark)" stroke="#4a1a09" stroke-width="1"/>
+    <path d="M 20 34 L 71 34" stroke="#e88964" stroke-width="1.5" stroke-linecap="round"/>
+    
+    <!-- Top Ingot -->
+    <rect x="10" y="20" width="55" height="30" rx="4" fill="url(#copperLight)" stroke="#5c2410" stroke-width="1"/>
+    <!-- Top Ingot Glare -->
+    <path d="M 12 22 L 63 22" stroke="#ffb194" stroke-width="2" stroke-linecap="round"/>
+    <path d="M 12 24 L 12 46" stroke="#ffb194" stroke-width="1" stroke-linecap="round"/>
+  </g>
+</svg>
