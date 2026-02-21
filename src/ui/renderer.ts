@@ -40,14 +40,6 @@ function drawSvg(ctx: CanvasRenderingContext2D, name: string, x: number, y: numb
   ctx.save();
   ctx.translate(cx, cy);
   ctx.rotate(dirToAngleRad(rot));
-
-  // Hardware-accelerated native drop shadow for SVGs
-  // (We stripped them from inside the SVGs to prevent browser performance armageddon)
-  ctx.shadowColor = "rgba(0, 0, 0, 0.5)";
-  ctx.shadowBlur = 4 * t.scale;
-  ctx.shadowOffsetX = 2 * t.scale;
-  ctx.shadowOffsetY = 4 * t.scale;
-
   ctx.drawImage(img, -size / 2, -size / 2, size, size);
   ctx.restore();
   return true;
@@ -234,11 +226,6 @@ function drawBelt(
         ctx.globalAlpha = 1.0;
 
         ctx.save();
-        ctx.shadowColor = "rgba(0, 0, 0, 0.4)";
-        ctx.shadowBlur = 2 * t.scale;
-        ctx.shadowOffsetX = 1 * t.scale;
-        ctx.shadowOffsetY = 2 * t.scale;
-
         ctx.drawImage(img, ix - iz / 2, -iz / 2, iz, iz);
         ctx.restore();
         continue;
