@@ -1,6 +1,7 @@
 import { getDefinition, registerEntity } from "../src/core/registry";
 import { createSim } from "../src/core/sim";
 import { attachInput } from "../src/ui/input";
+import { createPlacementController, type Simulation } from "../src/ui/placement";
 import { rotateDirection, DIRECTION_SEQUENCE, type Direction, type EntityBase, type ItemKind } from "../src/core/types";
 import "../src/entities/all";
 
@@ -1585,6 +1586,73 @@ describe("simulation registry and loop", () => {
     expect(entity.rot).toBe("S");
 
     controller.destroy();
+  });
+
+  test("cycles rotation in exact N->E->S->W->N order for non-repeat R actions", () => {
+    const kind = nextKind("miner-rotate-sequence-input");
+    registerEntity(kind, {
+      create: () => ({}),
+      update: () => {
+        // no-op
+      },
+    });
+
+    const sim = createSim();
+    const minerId = sim.addEntity({
+      kind,
+      pos: { x: 1, y: 1 },
+      rot: "N",
+    });
+    const entity = sim.getEntityById(minerId) as { rot: Direction };
+    const observed: Direction[] = [entity.rot];
+
+    const stage = createMockInputStage();
+    const controller = attachInput({
+      app: {},
+      stage,
+      metrics: { tileSize: 16, gridSize: { cols: 8, rows: 8 } },
+    });
+
+    const detachRotate = controller.onRotate(() => {
+      entity.rot = rotateDirection(entity.rot);
+      observed.push(entity.rot);
+    });
+
+    stage.emit("keydown", { code: "KeyR", repeat: false });
+    stage.emit("keydown", { code: "KeyR", repeat: false });
+    stage.emit("keydown", { code: "KeyR", repeat: false });
+    stage.emit("keydown", { code: "KeyR", repeat: false });
+
+    expect(observed).toEqual(["N", "E", "S", "W", "N"]);
+
+    detachRotate();
+    controller.destroy();
+  });
+
+  test("blocks right-click removal on bare resource nodes without mutation side effects", () => {
+    const resourceTile = { x: 3, y: 4 };
+    let removeCalls = 0;
+
+    const sim: Simulation = {
+      canPlace: () => true,
+      addEntity: () => undefined,
+      removeEntity: () => {
+        removeCalls += 1;
+        return { ok: true, reasonCode: "removed" };
+      },
+      canRemove: (tile) => !(tile.x === resourceTile.x && tile.y === resourceTile.y),
+      hasEntityAt: () => false,
+      isResourceTile: (tile) => tile.x === resourceTile.x && tile.y === resourceTile.y,
+    };
+
+    const controller = createPlacementController(sim, { cols: 20, rows: 20 });
+    controller.setCursor(resourceTile);
+    const outcome = controller.clickRMB();
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.reason).toBe("cannot_remove_resource");
+    expect(outcome.token).toBe("blocked-resource");
+    expect(removeCalls).toBe(0);
   });
 
   test("applies deterministic rotation with legacy two-arg addEntity entrypoint", () => {

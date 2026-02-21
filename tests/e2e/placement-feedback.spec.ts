@@ -80,6 +80,82 @@ const waitForEntityCount = async (page: Page, expectedCount: number): Promise<vo
   await expect.poll(async () => readEntityCount(page)).toBe(expectedCount);
 };
 
+const readTickCount = async (page: Page): Promise<number> => {
+  const tickCount = await page.evaluate(() => {
+    type RuntimeSimulation = {
+      getPlacementSnapshot?: () => { tickCount?: number };
+      tickCount?: unknown;
+    };
+
+    const sim = (window as { __SIM__?: unknown }).__SIM__;
+    if (!sim || typeof sim !== "object") {
+      return null;
+    }
+
+    const runtime = sim as RuntimeSimulation;
+    const snapshot = typeof runtime.getPlacementSnapshot === "function" ? runtime.getPlacementSnapshot() : null;
+    if (typeof snapshot?.tickCount === "number") {
+      return snapshot.tickCount;
+    }
+
+    return typeof runtime.tickCount === "number" ? runtime.tickCount : null;
+  });
+
+  if (typeof tickCount !== "number") {
+    throw new Error("Unable to read tick count from simulation");
+  }
+
+  return tickCount;
+};
+
+const findResourceTile = async (page: Page): Promise<{ tileX: number; tileY: number }> => {
+  const tile = await page.evaluate(() => {
+    type RuntimeMap = {
+      isOre?: (x: number, y: number) => boolean;
+    };
+    type RuntimeSimulation = {
+      width?: unknown;
+      height?: unknown;
+      getMap?: () => RuntimeMap;
+    };
+
+    const sim = (window as { __SIM__?: unknown }).__SIM__;
+    if (!sim || typeof sim !== "object") {
+      return null;
+    }
+
+    const runtime = sim as RuntimeSimulation;
+    if (typeof runtime.getMap !== "function") {
+      return null;
+    }
+    const map = runtime.getMap();
+    if (!map || typeof map.isOre !== "function") {
+      return null;
+    }
+
+    const width =
+      typeof runtime.width === "number" && Number.isInteger(runtime.width) && runtime.width > 0 ? runtime.width : 60;
+    const height =
+      typeof runtime.height === "number" && Number.isInteger(runtime.height) && runtime.height > 0 ? runtime.height : 40;
+
+    for (let tileY = 0; tileY < height; tileY += 1) {
+      for (let tileX = 0; tileX < width; tileX += 1) {
+        if (map.isOre(tileX, tileY)) {
+          return { tileX, tileY };
+        }
+      }
+    }
+
+    return null;
+  });
+
+  if (!tile) {
+    throw new Error("Unable to find an ore/resource tile");
+  }
+
+  return tile;
+};
+
 const findPlaceableBeltTile = async (
   page: Page,
   excludeTiles: readonly { x: number; y: number }[] = [],
@@ -247,6 +323,66 @@ const clickTile = async (
 };
 
 test.describe("placement feedback e2e", () => {
+  test("honors compact control contract for selection, rotation, resource removal, and pause toggle", async ({ page }) => {
+    await waitForAppReady(page);
+
+    const hudTool = page.getByTestId("hud-tool-value");
+    const hudRotation = page.getByTestId("hud-rotation-value");
+    const hudPause = page.getByTestId("hud-pause-value");
+    const status = page.getByRole("status");
+
+    await page.keyboard.press("Digit1");
+    await expect(hudTool).toHaveAttribute("data-value", "Miner");
+    await page.keyboard.press("Digit2");
+    await expect(hudTool).toHaveAttribute("data-value", "Belt");
+    await page.keyboard.press("Digit3");
+    await expect(hudTool).toHaveAttribute("data-value", "Inserter");
+    await page.keyboard.press("Digit4");
+    await expect(hudTool).toHaveAttribute("data-value", "Furnace");
+
+    await expect(hudRotation).toHaveAttribute("data-value", "N");
+    await page.keyboard.press("KeyR");
+    await expect(hudRotation).toHaveAttribute("data-value", "E");
+    await page.keyboard.press("KeyR");
+    await expect(hudRotation).toHaveAttribute("data-value", "S");
+    await page.keyboard.press("KeyR");
+    await expect(hudRotation).toHaveAttribute("data-value", "W");
+    await page.keyboard.press("KeyR");
+    await expect(hudRotation).toHaveAttribute("data-value", "N");
+
+    await page.keyboard.press("Digit2");
+    const startEntityCount = await readEntityCount(page);
+    const placedTile = await findPlaceableBeltTile(page);
+    await clickTile(page, placedTile.tileX, placedTile.tileY, "left");
+    await waitForEntityCount(page, startEntityCount + 1);
+
+    const resourceTile = await findResourceTile(page);
+    await clickTile(page, resourceTile.tileX, resourceTile.tileY, "right");
+    await expect(status).toHaveText(`Nothing to remove at (${resourceTile.tileX}, ${resourceTile.tileY}).`);
+    await waitForEntityCount(page, startEntityCount + 1);
+
+    const beforePauseTick = await readTickCount(page);
+    const beforePauseTool = await hudTool.getAttribute("data-value");
+    const beforePauseRotation = await hudRotation.getAttribute("data-value");
+    await page.keyboard.press("Space");
+    await expect(hudPause).toHaveAttribute("data-value", "paused");
+
+    await page.waitForTimeout(140);
+    const pausedTickOne = await readTickCount(page);
+    await page.waitForTimeout(140);
+    const pausedTickTwo = await readTickCount(page);
+    expect(pausedTickTwo).toBe(pausedTickOne);
+    expect(pausedTickOne).toBeGreaterThanOrEqual(beforePauseTick);
+    expect(await hudTool.getAttribute("data-value")).toBe(beforePauseTool);
+    expect(await hudRotation.getAttribute("data-value")).toBe(beforePauseRotation);
+    await waitForEntityCount(page, startEntityCount + 1);
+
+    await page.keyboard.press("Space");
+    await expect(hudPause).toHaveAttribute("data-value", "running");
+    await expect.poll(async () => readTickCount(page)).toBeGreaterThan(pausedTickTwo);
+    await waitForEntityCount(page, startEntityCount + 1);
+  });
+
   test("shows rejected feedback and clears it after valid placement and removal actions", async ({ page }) => {
     await waitForAppReady(page);
     await page.keyboard.press("Digit2");

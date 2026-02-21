@@ -429,6 +429,31 @@ function getRemovalAttemptOutcome(
   return { ok: true, reason: "removed" };
 }
 
+function getRemovalGuardOutcome(
+  sim: Simulation,
+  tile: Tile,
+): NormalizedOutcome | null {
+  const hasEntity = sim.hasEntityAt?.(tile) === true;
+
+  if (typeof sim.canRemove === "function") {
+    if (sim.canRemove(tile)) {
+      return null;
+    }
+
+    if (!hasEntity && sim.isResourceTile?.(tile) === true) {
+      return { ok: false, reason: "cannot_remove_resource" };
+    }
+
+    return { ok: false, reason: "cannot_remove" };
+  }
+
+  if (!hasEntity && sim.isResourceTile?.(tile) === true) {
+    return { ok: false, reason: "cannot_remove_resource" };
+  }
+
+  return null;
+}
+
 function canPreviewPlacement(
   sim: Simulation,
   kind: EntityKind,
@@ -533,7 +558,8 @@ export function createPlacementController(
         return state.feedback;
       }
 
-      const outcome = getRemovalAttemptOutcome(sim, state.cursor);
+      const guardOutcome = getRemovalGuardOutcome(sim, state.cursor);
+      const outcome = guardOutcome ?? getRemovalAttemptOutcome(sim, state.cursor);
       state.feedback = outcomeToFeedback("remove", outcome);
       recomputeCanPlace();
       return state.feedback;
