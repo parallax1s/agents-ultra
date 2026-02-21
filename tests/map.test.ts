@@ -143,6 +143,66 @@ function createPlacementFixture(seed: number | string = 1337, width = 20, height
   };
 }
 
+function createMapBackedPlacementFixture(seed: number | string = 1337, width = 20, height = 20): {
+  map: ReturnType<typeof createMap>;
+  sim: Simulation;
+} {
+  const map = createMap(width, height, seed);
+  const toMapKind = (kind: EntityKind): "miner" | "belt" | "inserter" | "furnace" => {
+    switch (kind) {
+      case "Miner":
+        return "miner";
+      case "Belt":
+        return "belt";
+      case "Inserter":
+        return "inserter";
+      case "Furnace":
+        return "furnace";
+    }
+  };
+
+  const sim: Simulation = {
+    canPlace(kind, tile) {
+      if (!map.isWithinBounds(tile.x, tile.y)) {
+        return false;
+      }
+
+      if (map.hasEntityAt(tile)) {
+        return false;
+      }
+
+      if (kind === "Miner" && !map.isOre(tile.x, tile.y)) {
+        return false;
+      }
+
+      return true;
+    },
+    addEntity(kind, tile) {
+      return map.place(toMapKind(kind), tile);
+    },
+    placeEntity(kind, tile) {
+      return map.place(toMapKind(kind), tile);
+    },
+    removeEntity(tile) {
+      return map.remove(tile);
+    },
+    removeAt(tile) {
+      return map.remove(tile);
+    },
+    canRemove(tile) {
+      return map.isWithinBounds(tile.x, tile.y) && map.hasEntityAt(tile);
+    },
+    hasEntityAt(tile) {
+      return map.hasEntityAt(tile);
+    },
+    isResourceTile(tile) {
+      return map.isOre(tile.x, tile.y);
+    },
+  };
+
+  return { map, sim };
+}
+
 describe("createMap", () => {
   it("is deterministic for the same seed", () => {
     const first = snapshotTiles(64, 64, 1337);
@@ -204,9 +264,147 @@ describe("createMap", () => {
     expect(map.isWithinBounds(0.5, 1)).toBe(false);
     expect(map.isWithinBounds(1, 0.5)).toBe(false);
   });
+
+  it("treats bare resource tiles as non-removable while allowing removable occupants", () => {
+    const width = 20;
+    const height = 20;
+    const map = createMap(width, height, 99);
+    const oreTile = firstTile(map, width, height, (x, y) => map.isOre(x, y));
+    const emptyTile = firstTile(map, width, height, (x, y) => !map.isOre(x, y));
+
+    expect(map.remove(oreTile)).toMatchObject({
+      success: false,
+      ok: false,
+      reason: "non-removable-resource",
+      tile: oreTile,
+    });
+
+    expect(map.place("belt", emptyTile)).toMatchObject({
+      success: true,
+      ok: true,
+      kind: "belt",
+      tile: emptyTile,
+    });
+    expect(map.remove(emptyTile)).toMatchObject({
+      success: true,
+      ok: true,
+      removedKind: "belt",
+      tile: emptyTile,
+    });
+  });
 });
 
 describe("placement controller validation", () => {
+  it("enforces placement occupancy deterministically with map-backed outcomes", () => {
+    const runSequence = (): { outcomes: string[]; occupiedSnapshots: boolean[] } => {
+      const width = 20;
+      const height = 20;
+      const { map, sim } = createMapBackedPlacementFixture(404, width, height);
+      const tile = firstTile(map, width, height, (x, y) => !map.isOre(x, y));
+      const controller = createPlacementController(sim, { cols: width, rows: height });
+
+      controller.selectKind("Belt");
+      controller.setCursor(tile);
+
+      const outcomes: string[] = [];
+      const occupiedSnapshots: boolean[] = [];
+
+      const first = controller.clickLMB();
+      outcomes.push(`${first.ok}:${first.reason}:${first.token}`);
+      occupiedSnapshots.push(map.hasEntityAt(tile));
+
+      const second = controller.clickLMB();
+      outcomes.push(`${second.ok}:${second.reason}:${second.token}`);
+      occupiedSnapshots.push(map.hasEntityAt(tile));
+
+      const removed = controller.clickRMB();
+      outcomes.push(`${removed.ok}:${removed.reason}:${removed.token}`);
+      occupiedSnapshots.push(map.hasEntityAt(tile));
+
+      const third = controller.clickLMB();
+      outcomes.push(`${third.ok}:${third.reason}:${third.token}`);
+      occupiedSnapshots.push(map.hasEntityAt(tile));
+
+      return { outcomes, occupiedSnapshots };
+    };
+
+    const firstRun = runSequence();
+    const secondRun = runSequence();
+
+    expect(firstRun).toEqual(secondRun);
+    expect(firstRun.outcomes).toEqual([
+      "true:placed:placed",
+      "false:occupied:blocked-occupied",
+      "true:removed:removed",
+      "true:placed:placed",
+    ]);
+    expect(firstRun.occupiedSnapshots).toEqual([true, true, false, true]);
+  });
+
+  it("rejects miner placement on non-resource tiles and accepts ore tiles", () => {
+    const width = 20;
+    const height = 20;
+    const { map, sim } = createMapBackedPlacementFixture(7331, width, height);
+    const nonOreTile = firstTile(map, width, height, (x, y) => !map.isOre(x, y));
+    const oreTile = firstTile(map, width, height, (x, y) => map.isOre(x, y));
+
+    const controller = createPlacementController(sim, { cols: width, rows: height });
+    controller.selectKind("Miner");
+
+    controller.setCursor(nonOreTile);
+    const rejected = controller.clickLMB();
+    expect(rejected).toMatchObject({
+      action: "place",
+      ok: false,
+      reason: "invalid_miner_on_resource",
+      token: "blocked-resource-required",
+    });
+    expect(map.hasEntityAt(nonOreTile)).toBe(false);
+
+    controller.setCursor(oreTile);
+    const placed = controller.clickLMB();
+    expect(placed).toMatchObject({
+      action: "place",
+      ok: true,
+      reason: "placed",
+      token: "placed",
+    });
+    expect(map.hasEntityAt(oreTile)).toBe(true);
+  });
+
+  it("blocks right-click on bare resource nodes and removes removable entities", () => {
+    const width = 20;
+    const height = 20;
+    const { map, sim } = createMapBackedPlacementFixture(42, width, height);
+    const oreTile = firstTile(map, width, height, (x, y) => map.isOre(x, y));
+    const emptyTile = firstTile(map, width, height, (x, y) => !map.isOre(x, y));
+
+    const controller = createPlacementController(sim, { cols: width, rows: height });
+    controller.selectKind("Belt");
+    controller.setCursor(emptyTile);
+    expect(controller.clickLMB().ok).toBe(true);
+    expect(map.hasEntityAt(emptyTile)).toBe(true);
+
+    const removed = controller.clickRMB();
+    expect(removed).toMatchObject({
+      action: "remove",
+      ok: true,
+      reason: "removed",
+      token: "removed",
+    });
+    expect(map.hasEntityAt(emptyTile)).toBe(false);
+
+    controller.setCursor(oreTile);
+    const blocked = controller.clickRMB();
+    expect(blocked).toMatchObject({
+      action: "remove",
+      ok: false,
+      reason: "cannot_remove_resource",
+      token: "blocked-resource",
+    });
+    expect(map.hasEntityAt(oreTile)).toBe(false);
+  });
+
   it("deterministically handles occupied targets and repeated placement/removal", () => {
     const runSequence = (): { snapshots: string[]; reasons: string[] } => {
       const width = 20;
