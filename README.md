@@ -4,7 +4,7 @@ Factorio-style agent playground focused on a playable vertical slice.
 
 ## Vertical Slice Overview
 This slice is centered on core placement interactions in a browser sandbox:
-- Select a build item from slots `1` to `4`
+- Select a build item from slots `1` to `5`
 - Rotate placement direction before placing
 - Place and remove structures on the grid
 - Pause and resume the simulation loop
@@ -122,7 +122,7 @@ npm run test
 ```
 
 ## Controls
-- `1` / `2` / `3` / `4`: select build slot
+- `1` / `2` / `3` / `4` / `5`: select build slot (including Chest on `5`)
 - `R`: rotate selected building orientation
 - `W` / `A` / `S` / `D` or arrow keys: move player avatar
 - `F`: refuel from nearby furnace output (consumes one iron-plate)
@@ -137,7 +137,7 @@ npm run test
 3. Press 4 to select Furnace. Place it at the end of the belt path where an inserter can drop items into it; LMB to place.
 4. Press 3 to select Inserter. Rotate with R so the pickup side faces the belt and the drop side faces the furnace, then LMB to place between them.
 5. Press Space to unpause. The miner emits iron-ore, the belt advances it, the inserter feeds the furnace, and the furnace smelts iron-plate.
-6. Use RMB to remove any misplaced entity. Re-select (1–4), rotate with R, and place again with LMB.
+6. Use RMB to remove any misplaced entity. Re-select (1–5), rotate with R, and place again with LMB.
 7. Watch for your first iron-plate after ~3 seconds of furnace time.
 
 ### Troubleshooting
@@ -147,10 +147,15 @@ npm run test
 - Output blocked: if the tile in front of the miner is occupied or the belt is full, the miner stalls. Clear with RMB or extend the belt.
 - Still nothing? Check that the game isn’t paused (Space).
 
+## What is implemented vs pending
+
+- Implemented: miner, belt, inserter, furnace, chest, fixed-step simulation, deterministic transport loops, player movement/refuel, HUD metrics, SVG rendering, and chest inventory transfer (`Q`/`E`).
+- In progress / pending: actual burner fuel/item economics (coal path), splitters, power system, save/load state, and broader crafting/optimization tooling.
+
 ## Known Limitations
 - No power system yet
 - No splitters yet
-- Fuel loop is intentionally lightweight (single player fuel pool, no power network coupling)
+- Fuel loop is intentionally lightweight and currently uses furnace output plates for player refuel (no burner network yet)
 
 ## Troubleshooting
 - `npm: command not found`: reinstall Node.js `20+` and confirm with `node -v` and `npm -v`.

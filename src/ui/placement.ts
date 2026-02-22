@@ -1,7 +1,7 @@
 /**
  * Supported buildable entity kinds for placement.
  */
-export type EntityKind = 'Miner' | 'Belt' | 'Inserter' | 'Furnace';
+export type EntityKind = 'Miner' | 'Belt' | 'Inserter' | 'Furnace' | 'Chest';
 
 /**
  * Quarter-turn clockwise rotations.
@@ -53,7 +53,7 @@ export type PlacementFeedback = {
 /**
  * Canonical list of all placeable entity kinds.
  */
-export const ALL_ENTITY_KINDS: EntityKind[] = ['Miner', 'Belt', 'Inserter', 'Furnace'];
+export const ALL_ENTITY_KINDS: EntityKind[] = ['Miner', 'Belt', 'Inserter', 'Furnace', 'Chest'];
 
 export type CoreActionOutcome = {
   ok?: boolean;

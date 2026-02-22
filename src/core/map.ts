@@ -5,7 +5,7 @@ type GridCoord = {
   y: number;
 };
 
-export type MapOccupantKind = "miner" | "belt" | "inserter" | "furnace";
+export type MapOccupantKind = "miner" | "belt" | "inserter" | "furnace" | "chest";
 
 export type MapPlacementFailureReason = "occupied" | "out-of-bounds" | "invalid-miner-on-resource";
 

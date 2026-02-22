@@ -24,6 +24,7 @@ const SVG_ASSET_NAMES = [
   "transport-belt-basic-yellow",
   "basic-inserter",
   "furnace",
+  "chest",
   "iron-ore",
   "player",
 ] as const;
@@ -455,6 +456,81 @@ function drawFurnace(
   ctx.restore();
 }
 
+function drawChest(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  t: Transform,
+): void {
+  const px = t.offsetX + x * t.tileRender;
+  const py = t.offsetY + y * t.tileRender;
+  const pad = Math.max(1.2, t.tileRender * 0.08);
+  const innerPad = Math.max(2.4, t.tileRender * 0.18);
+  const bodyW = Math.ceil(t.tileRender) - 2 * pad;
+  const bodyH = Math.ceil(t.tileRender) - 2 * pad;
+
+  // Always draw a clear fallback silhouette first so chest placement is visible even if
+  // image loading stalls or fails.
+  ctx.save();
+  ctx.save();
+  ctx.shadowColor = "rgba(0, 0, 0, 0.38)";
+  ctx.shadowBlur = Math.max(1.5, t.tileRender * 0.08);
+  ctx.fillStyle = "#4f3a1c";
+  ctx.strokeStyle = "#27170a";
+  ctx.lineWidth = Math.max(1, t.tileRender * 0.05);
+  ctx.beginPath();
+  ctx.fillRect(px + pad, py + pad, bodyW, bodyH);
+  ctx.strokeRect(px + pad + 0.5, py + pad + 0.5, bodyW - 1, bodyH - 1);
+
+  const topOffset = t.tileRender * 0.2;
+  const lidHeight = Math.max(2.5, t.tileRender * 0.11);
+  ctx.fillStyle = "#6a4a22";
+  ctx.fillRect(px + pad + 1, py + pad + 0.8, bodyW - 2, lidHeight);
+
+  ctx.fillStyle = "rgba(0, 0, 0, 0.20)";
+  ctx.fillRect(px + pad + 1, py + pad + topOffset, bodyW - 2, lidHeight);
+  ctx.restore();
+
+  ctx.restore();
+
+  // Inner slot glow / divider.
+  ctx.save();
+  ctx.fillStyle = "rgba(238, 230, 214, 0.9)";
+  ctx.fillRect(px + innerPad, py + innerPad, bodyW - innerPad * 0.95 * 2, t.tileRender * 0.1);
+
+  ctx.fillStyle = "rgba(255, 255, 255, 0.08)";
+  ctx.fillRect(px + innerPad, py + innerPad * 1.8 + t.tileRender * 0.25, bodyW - innerPad * 1.9, t.tileRender * 0.06);
+
+  ctx.fillStyle = "rgba(0, 0, 0, 0.24)";
+  ctx.fillRect(px + innerPad, py + innerPad * 1.95 + t.tileRender * 0.55, bodyW - innerPad * 1.9, t.tileRender * 0.1);
+
+  ctx.fillStyle = "#f3de6a";
+  const handleX = px + bodyW * 0.53;
+  const handleY = py + bodyW * 0.5;
+  const handleW = Math.max(3, t.tileRender * 0.11);
+  const handleH = Math.max(4, t.tileRender * 0.16);
+  ctx.fillRect(handleX - handleW / 2, handleY - handleH / 2, handleW, handleH);
+  ctx.restore();
+
+  // Outer edge and lock marker.
+  ctx.save();
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
+  ctx.lineWidth = Math.max(1, t.tileRender * 0.04);
+  ctx.strokeRect(px + t.tileRender * 0.12, py + t.tileRender * 0.12, t.tileRender * 0.76, t.tileRender * 0.76);
+  ctx.fillStyle = "#2f2f2f";
+  ctx.strokeStyle = "#f7eed8";
+  ctx.lineWidth = Math.max(1, t.tileRender * 0.035);
+  ctx.beginPath();
+  ctx.arc(px + t.tileRender * 0.5, py + t.tileRender * 0.5, Math.max(1.5, t.tileRender * 0.05), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
+  if (!!window.__USE_SVGS__) {
+    drawSvg(ctx, "chest", x, y, "N", t, 0.96);
+  }
+}
+
 function clamp01(n: number): number {
   if (!Number.isFinite(n)) return 0;
   if (n < 0) return 0;
@@ -661,8 +737,11 @@ export function createRenderer(canvas: HTMLCanvasElement): RendererApi {
           drawFurnace(ctx, e.pos.x, e.pos.y, progress, t, snapshot.time.tick);
           break;
         }
+        case "chest":
+          drawChest(ctx, e.pos.x, e.pos.y, t);
+          break;
         default:
-          // resource/chest/unknown: skip
+          // resource/unknown: skip
           break;
       }
     }

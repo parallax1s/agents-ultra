@@ -26,6 +26,7 @@ const PLAYER_MAX_FUEL = 100;
 const PLAYER_MOVE_FUEL_COST = 1;
 const PLAYER_BUILD_FUEL_COST = 2;
 const PLAYER_REFUEL_AMOUNT = 25;
+const PLAYER_INVENTORY_CAPACITY = 24;
 
 type Tile = {
   x: number;
@@ -47,15 +48,19 @@ type PaletteViewComponent = (props: PaletteProps) => ReturnType<typeof Palette>;
 
 const PaletteView = Palette as unknown as PaletteViewComponent;
 
-const HOTKEY_TO_KIND: Readonly<Record<'Digit1' | 'Digit2' | 'Digit3' | 'Digit4', EntityKind>> = {
+const HOTKEY_TO_KIND: Readonly<
+  Record<'Digit1' | 'Digit2' | 'Digit3' | 'Digit4' | 'Digit5', EntityKind>
+> = {
   Digit1: 'Miner',
   Digit2: 'Belt',
   Digit3: 'Inserter',
   Digit4: 'Furnace',
+  Digit5: 'Chest',
 };
 
 type RuntimeDirection = 'N' | 'E' | 'S' | 'W';
-type RuntimeEntityKind = 'miner' | 'belt' | 'inserter' | 'furnace';
+type RuntimeEntityKind = 'miner' | 'belt' | 'inserter' | 'furnace' | 'chest';
+type RuntimeItemKind = 'iron-ore' | 'iron-plate';
 
 type RuntimeEntity = {
   id: string;
@@ -73,6 +78,24 @@ type PlacementSnapshot = {
   fuel: number;
   maxFuel: number;
   player: Tile;
+  inventory: {
+    ore: number;
+    plate: number;
+    used: number;
+    capacity: number;
+  };
+};
+
+type InventoryState = PlacementSnapshot['inventory'];
+
+type ChestStateLike = {
+  capacity?: unknown;
+  stored?: unknown;
+  canAcceptItem?: unknown;
+  acceptItem?: unknown;
+  canProvideItem?: unknown;
+  provideItem?: unknown;
+  items?: unknown;
 };
 
 type RuntimeSimulation = Simulation & {
@@ -86,9 +109,12 @@ type RuntimeSimulation = Simulation & {
   getMap: () => ReturnType<typeof createMap>;
   getAllEntities: () => RuntimeEntity[];
   getPlacementSnapshot: () => PlacementSnapshot;
+  getInventorySnapshot: () => PlacementSnapshot['inventory'];
   getPlayerSnapshot: () => { x: number; y: number; fuel: number; maxFuel: number; rot?: RuntimeDirection };
   movePlayer: (direction: RuntimeDirection) => CoreActionOutcome;
   refuel: () => CoreActionOutcome;
+  pickupItem: () => CoreActionOutcome;
+  depositItem: () => CoreActionOutcome;
   destroy: () => void;
 };
 
@@ -103,8 +129,11 @@ type RuntimeMetrics = {
   belts: number;
   inserters: number;
   furnaces: number;
+  chests: number;
   oreInTransit: number;
   platesInTransit: number;
+  chestOre: number;
+  chestPlates: number;
   furnacesCrafting: number;
   furnacesReady: number;
 };
@@ -117,7 +146,16 @@ type HudState = {
   fuel: number;
   maxFuel: number;
   player: Tile;
+  inventory: PlacementSnapshot['inventory'];
   metrics: RuntimeMetrics;
+  adjacentChest: {
+    id: string;
+    x: number;
+    y: number;
+    inventory: InventoryState;
+    used: number;
+    remaining: number;
+  } | null;
 };
 
 const RUNTIME_KIND: Record<EntityKind, RuntimeEntityKind> = {
@@ -125,6 +163,7 @@ const RUNTIME_KIND: Record<EntityKind, RuntimeEntityKind> = {
   Belt: 'belt',
   Inserter: 'inserter',
   Furnace: 'furnace',
+  Chest: 'chest',
 };
 
 const ROTATION_TO_DIRECTION: Record<Rotation, RuntimeDirection> = {
@@ -139,6 +178,132 @@ const DIRECTION_TO_DELTA: Readonly<Record<RuntimeDirection, Tile>> = {
   E: { x: 1, y: 0 },
   S: { x: 0, y: 1 },
   W: { x: -1, y: 0 },
+};
+
+const getAdjacentInteractionTiles = (tile: Tile): Tile[] => {
+  return [
+    tile,
+    { x: tile.x, y: tile.y - 1 },
+    { x: tile.x + 1, y: tile.y },
+    { x: tile.x, y: tile.y + 1 },
+    { x: tile.x - 1, y: tile.y },
+  ].filter((candidate) =>
+    candidate.x >= 0 &&
+    candidate.y >= 0 &&
+    candidate.x < WORLD_WIDTH &&
+    candidate.y < WORLD_HEIGHT
+  );
+};
+
+const toInt = (value: unknown): number | null => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null;
+  }
+  const normalized = Math.floor(value);
+  return normalized >= 0 ? normalized : 0;
+};
+
+const normalizeInventoryState = (state: InventoryState): InventoryState => {
+  const capacity = Number.isFinite(state.capacity) ? Math.max(1, Math.floor(state.capacity)) : PLAYER_INVENTORY_CAPACITY;
+  const ore = Math.max(0, Math.floor(state.ore));
+  const plate = Math.max(0, Math.floor(state.plate));
+  const used = Math.max(0, Math.min(capacity, ore + plate));
+  return {
+    capacity,
+    ore,
+    plate,
+    used,
+  };
+};
+
+const resolveTile = (value: unknown): Tile | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const x = toInt(value.x);
+  const y = toInt(value.y);
+  if (x === null || y === null) {
+    return null;
+  }
+  return { x, y };
+};
+
+const getEntitySnapshotState = (entity: unknown): Record<string, unknown> | null => {
+  return isRecord(entity) ? (entity as Record<string, unknown>) : null;
+};
+
+const getChestInventorySnapshotFromState = (chestState: unknown): InventoryState | null => {
+  const raw = getEntitySnapshotState(chestState);
+  if (raw === null) {
+    return null;
+  }
+
+  const storedValue = raw.stored;
+  const storedRecord = isRecord(storedValue) ? storedValue : null;
+  const capacity = toInt(raw.capacity) ?? PLAYER_INVENTORY_CAPACITY;
+  const ore = toInt(storedRecord?.["iron-ore"]) ?? 0;
+  const plate = toInt(storedRecord?.["iron-plate"]) ?? 0;
+
+  return normalizeInventoryState({
+    capacity,
+    ore,
+    plate,
+    used: ore + plate,
+  });
+};
+
+const getAdjacentChestSnapshot = (sim: Simulation, player: Tile | null): HudState["adjacentChest"] => {
+  if (player === null) {
+    return null;
+  }
+
+  const getAllEntities = (sim as { getAllEntities?: () => unknown[] }).getAllEntities;
+  if (typeof getAllEntities !== 'function') {
+    return null;
+  }
+
+  const entities = getAllEntities.call(sim);
+  if (!Array.isArray(entities)) {
+    return null;
+  }
+
+  const candidates = getAdjacentInteractionTiles(player);
+  const candidateSet = new Set(candidates.map((entry) => `${entry.x},${entry.y}`));
+
+  for (const candidate of candidates) {
+    const candidateKey = `${candidate.x},${candidate.y}`;
+    const normalizedCandidate = candidateKey;
+    for (const rawEntity of entities) {
+      if (!isRecord(rawEntity)) {
+        continue;
+      }
+      if (rawEntity.kind !== 'chest') {
+        continue;
+      }
+
+      const pos = resolveTile(rawEntity.pos);
+      if (pos === null) {
+        continue;
+      }
+      const posKey = `${pos.x},${pos.y}`;
+      if (candidateSet.has(posKey) && posKey === normalizedCandidate) {
+        const chestSnapshot = getChestInventorySnapshotFromState(rawEntity.state);
+        if (chestSnapshot === null) {
+          continue;
+        }
+        return {
+          id: typeof rawEntity.id === 'string' ? rawEntity.id : `${rawEntity.id ?? 'chest'}`,
+          x: pos.x,
+          y: pos.y,
+          inventory: chestSnapshot,
+          used: chestSnapshot.used,
+          remaining: Math.max(0, chestSnapshot.capacity - chestSnapshot.used),
+        };
+      }
+    }
+  }
+
+  return null;
 };
 
 const MOVE_HOTKEY_TO_DIRECTION: Readonly<Record<string, RuntimeDirection>> = {
@@ -175,7 +340,208 @@ function createRuntimeSimulation(): RuntimeSimulation {
     fuel: PLAYER_MAX_FUEL,
     maxFuel: PLAYER_MAX_FUEL,
   };
+  const playerInventory: InventoryState = {
+    ore: 0,
+    plate: 0,
+    used: 0,
+    capacity: PLAYER_INVENTORY_CAPACITY,
+  };
   let intervalId: number | null = null;
+
+  const getInventoryUsed = (state: InventoryState): number => {
+    return Math.max(0, Math.floor(state.ore) + Math.floor(state.plate));
+  };
+
+  const normalizeInventory = (state: InventoryState): InventoryState => {
+    const capacity = Number.isFinite(state.capacity) ? Math.max(1, Math.floor(state.capacity)) : PLAYER_INVENTORY_CAPACITY;
+    const ore = Math.max(0, Math.floor(state.ore));
+    const plate = Math.max(0, Math.floor(state.plate));
+    return {
+      capacity,
+      ore,
+      plate,
+      used: Math.max(0, Math.min(capacity, ore + plate)),
+    };
+  };
+
+  playerInventory.capacity = normalizeInventory(playerInventory).capacity;
+  playerInventory.ore = normalizeInventory(playerInventory).ore;
+  playerInventory.plate = normalizeInventory(playerInventory).plate;
+  playerInventory.used = getInventoryUsed(playerInventory);
+
+  const toInt = (value: unknown): number | null => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      return null;
+    }
+    const normalized = Math.floor(value);
+    return normalized >= 0 ? normalized : 0;
+  };
+
+  const readChestState = (state: unknown): ChestStateLike | null => {
+    if (state === null || typeof state !== 'object') {
+      return null;
+    }
+    return state as ChestStateLike;
+  };
+
+  const getChestState = (entity: { id: string; state?: unknown }): ChestStateLike | null => {
+    const direct = readChestState(entity.state);
+    if (direct !== null) {
+      return direct;
+    }
+    const core = (coreSim as { getEntityById?: (id: string) => { state?: unknown } | undefined }).getEntityById?.(entity.id);
+    return core !== undefined ? readChestState(core?.state) : null;
+  };
+
+  const getAdjacentChests = (tile: Tile): Array<{ id: string; pos: Tile; state: ChestStateLike; }> => {
+    const result: Array<{ id: string; pos: Tile; state: ChestStateLike }> = [];
+    const candidateTiles = getAdjacentInteractionTiles(tile);
+    for (const candidate of candidateTiles) {
+      const entities = coreSim.getEntitiesAt(candidate);
+      for (const entity of entities) {
+        if (entity.kind !== 'chest') {
+          continue;
+        }
+        const chestState = getChestState(entity);
+        if (chestState !== null) {
+          result.push({ id: entity.id, pos: candidate, state: chestState });
+        }
+      }
+    }
+
+    return result;
+  };
+
+  const getChestInventorySnapshot = (chestState: ChestStateLike): InventoryState => {
+    const storedValue = chestState.stored;
+    const storedRecord = isRecord(storedValue) ? storedValue : null;
+    const capacity = toInt(chestState.capacity) ?? PLAYER_INVENTORY_CAPACITY;
+    const ore = toInt(storedRecord?.["iron-ore"]) ?? 0;
+    const plate = toInt(storedRecord?.["iron-plate"]) ?? 0;
+    return normalizeInventory({
+      capacity,
+      ore,
+      plate,
+      used: ore + plate,
+    });
+  };
+
+  const getPlayerInventorySnapshot = (): InventoryState => {
+    return normalizeInventory({ ...playerInventory, used: getInventoryUsed(playerInventory) });
+  };
+
+  const setPlayerInventory = (next: InventoryState): void => {
+    const normalized = normalizeInventory(next);
+    playerInventory.ore = normalized.ore;
+    playerInventory.plate = normalized.plate;
+    playerInventory.used = normalized.used;
+    playerInventory.capacity = normalized.capacity;
+  };
+
+  const withChestInteraction = (action: 'pickup' | 'deposit'): CoreActionOutcome => {
+    const candidates = getAdjacentChests(player);
+    if (candidates.length === 0) {
+      return {
+        ok: false,
+        reasonCode: 'no_chest',
+        reason: 'No chest nearby.',
+      };
+    }
+
+    if (action === 'pickup') {
+      if (playerInventory.used >= playerInventory.capacity) {
+        return {
+          ok: false,
+          reasonCode: 'inventory_full',
+          reason: 'Player inventory full.',
+        };
+      }
+
+      for (const candidate of candidates) {
+        const provide = candidate.state.provideItem;
+        if (typeof provide !== 'function') {
+          continue;
+        }
+
+        const takeOrder: ReadonlyArray<RuntimeItemKind> = ['iron-plate', 'iron-ore'];
+        for (const wanted of takeOrder) {
+          const got = provide.call(candidate.state, wanted) as RuntimeItemKind | null;
+          if (got === 'iron-ore' || got === 'iron-plate') {
+            const next = { ...playerInventory };
+            if (got === 'iron-ore') {
+              next.ore += 1;
+            } else {
+              next.plate += 1;
+            }
+            next.used = getInventoryUsed(next);
+            setPlayerInventory(next);
+            return {
+              ok: true,
+              reasonCode: 'picked',
+              reason: 'Picked item.',
+            };
+          }
+        }
+      }
+
+      return {
+        ok: false,
+        reasonCode: 'chest_empty',
+        reason: 'Chest empty.',
+      };
+    }
+
+    if (playerInventory.ore + playerInventory.plate <= 0) {
+      return {
+        ok: false,
+        reasonCode: 'nothing_to_deposit',
+        reason: 'Nothing in inventory.',
+      };
+    }
+
+    for (const candidate of candidates) {
+      const canAcceptItem = candidate.state.canAcceptItem;
+      const acceptItem = candidate.state.acceptItem;
+      if (typeof canAcceptItem !== 'function' || typeof acceptItem !== 'function') {
+        continue;
+      }
+
+      const putOrder: ReadonlyArray<RuntimeItemKind> = ['iron-ore', 'iron-plate'];
+      for (const offered of putOrder) {
+        const countAvailable = offered === 'iron-ore' ? playerInventory.ore : playerInventory.plate;
+        if (countAvailable <= 0) {
+          continue;
+        }
+
+        const canAccept = canAcceptItem.call(candidate.state, offered);
+        if (canAccept !== true) {
+          continue;
+        }
+
+        const accepted = acceptItem.call(candidate.state, offered);
+          if (accepted === true) {
+            const next = { ...playerInventory };
+            if (offered === 'iron-ore') {
+              next.ore -= 1;
+            } else {
+              next.plate -= 1;
+            }
+            setPlayerInventory(next);
+            return {
+              ok: true,
+              reasonCode: 'deposited',
+              reason: 'Deposited item.',
+            };
+          }
+        }
+      }
+
+    return {
+      ok: false,
+      reasonCode: 'chest_full',
+      reason: 'Chest full.',
+    };
+  };
 
   const inBounds = (tile: Tile): boolean =>
     tile.x >= 0 && tile.y >= 0 && tile.x < WORLD_WIDTH && tile.y < WORLD_HEIGHT;
@@ -317,6 +683,7 @@ function createRuntimeSimulation(): RuntimeSimulation {
         fuel: player.fuel,
         maxFuel: player.maxFuel,
         player: { x: player.x, y: player.y },
+        inventory: getPlayerInventorySnapshot(),
       };
     },
 
@@ -328,6 +695,10 @@ function createRuntimeSimulation(): RuntimeSimulation {
         maxFuel: player.maxFuel,
         rot: player.rot,
       };
+    },
+
+    getInventorySnapshot() {
+      return getPlayerInventorySnapshot();
     },
 
     canRemove(tile) {
@@ -380,6 +751,14 @@ function createRuntimeSimulation(): RuntimeSimulation {
 
     refuel() {
       return refuel();
+    },
+
+    pickupItem() {
+      return withChestInteraction('pickup');
+    },
+
+    depositItem() {
+      return withChestInteraction('deposit');
     },
 
     destroy() {
@@ -495,8 +874,11 @@ function getSimulationMetrics(sim: Simulation): RuntimeMetrics | null {
     belts: 0,
     inserters: 0,
     furnaces: 0,
+    chests: 0,
     oreInTransit: 0,
     platesInTransit: 0,
+    chestOre: 0,
+    chestPlates: 0,
     furnacesCrafting: 0,
     furnacesReady: 0,
   };
@@ -544,6 +926,17 @@ function getSimulationMetrics(sim: Simulation): RuntimeMetrics | null {
       } else if (progress !== null && progress > 0 && progress < 1) {
         metrics.furnacesCrafting += 1;
       }
+      continue;
+    }
+
+    if (entity.kind === 'chest') {
+      metrics.chests += 1;
+      const chestState = isRecord(entity.state) ? entity.state : null;
+      const stored = isRecord(chestState?.stored) ? chestState.stored : null;
+      const chestOre = toInt(stored?.['iron-ore']) ?? 0;
+      const chestPlate = toInt(stored?.['iron-plate']) ?? 0;
+      metrics.chestOre += chestOre;
+      metrics.chestPlates += chestPlate;
     }
   }
 
@@ -555,6 +948,47 @@ function describeKindOrTarget(kind: EntityKind | null, tile: Tile | null): strin
   const suffix = tile === null ? '' : ` at (${tile.x}, ${tile.y})`;
   return `${prefix}${suffix}`;
 }
+
+const renderInventoryPanel = (title: string, inventory: InventoryState): JSX.Element => {
+  const capacity = Math.max(1, Math.floor(inventory.capacity));
+  const ore = Math.max(0, Math.floor(inventory.ore));
+  const plate = Math.max(0, Math.floor(inventory.plate));
+  const used = Math.max(0, Math.floor(inventory.used));
+  const fillRatio = Math.max(0, Math.min(1, capacity > 0 ? used / capacity : 0));
+  const barWidth = 130;
+  const oreWidth = Math.max(0, Math.min(barWidth, Math.round((ore / capacity) * barWidth)));
+  const plateWidth = Math.max(0, Math.min(barWidth - oreWidth, Math.round((plate / capacity) * barWidth)));
+  const spareWidth = Math.max(0, barWidth - oreWidth - plateWidth);
+
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'baseline' }}>
+        <span style={{ opacity: 0.9 }}>{title}</span>
+        <span style={{ fontFamily: 'monospace' }}>
+          O:{ore} P:{plate}
+        </span>
+      </div>
+      <div
+        style={{
+          marginTop: 4,
+          height: 10,
+          width: barWidth,
+          border: '1px solid rgba(255,255,255,0.35)',
+          background: 'rgba(255,255,255,0.06)',
+          display: 'flex',
+          overflow: 'hidden',
+        }}
+      >
+        <div style={{ width: oreWidth, background: '#4f86f7' }} />
+        <div style={{ width: plateWidth, background: '#f7ca4f' }} />
+        <div style={{ width: spareWidth, background: 'rgba(255,255,255,0.08)' }} />
+      </div>
+      <div style={{ opacity: 0.78, marginTop: 2, fontSize: 11 }}>
+        Fill {Math.round(fillRatio * 100)}% ({used}/{capacity})
+      </div>
+    </div>
+  );
+};
 
 function ensureSimulation(): RuntimeSimulation {
   if (window.__SIM__ && typeof window.__SIM__ === 'object') {
@@ -665,11 +1099,21 @@ export default function App() {
       belts: 0,
       inserters: 0,
       furnaces: 0,
+      chests: 0,
+      chestOre: 0,
+      chestPlates: 0,
       oreInTransit: 0,
       platesInTransit: 0,
       furnacesCrafting: 0,
       furnacesReady: 0,
     },
+    inventory: {
+      ore: 0,
+      plate: 0,
+      used: 0,
+      capacity: PLAYER_INVENTORY_CAPACITY,
+    },
+    adjacentChest: null,
   };
   const [selectedKind, setSelectedKind] = useState(null as EntityKind | null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -691,7 +1135,9 @@ export default function App() {
         fuel: patch.fuel === undefined ? current.fuel : patch.fuel,
         maxFuel: patch.maxFuel === undefined ? current.maxFuel : patch.maxFuel,
         player: patch.player === undefined ? current.player : patch.player,
+        inventory: patch.inventory === undefined ? current.inventory : patch.inventory,
         metrics: patch.metrics === undefined ? current.metrics : patch.metrics,
+        adjacentChest: patch.adjacentChest === undefined ? current.adjacentChest : patch.adjacentChest,
       };
 
       if (
@@ -708,10 +1154,25 @@ export default function App() {
         current.metrics.belts === next.metrics.belts &&
         current.metrics.inserters === next.metrics.inserters &&
         current.metrics.furnaces === next.metrics.furnaces &&
+        current.metrics.chests === next.metrics.chests &&
         current.metrics.oreInTransit === next.metrics.oreInTransit &&
         current.metrics.platesInTransit === next.metrics.platesInTransit &&
+        current.metrics.chestOre === next.metrics.chestOre &&
+        current.metrics.chestPlates === next.metrics.chestPlates &&
         current.metrics.furnacesCrafting === next.metrics.furnacesCrafting &&
-        current.metrics.furnacesReady === next.metrics.furnacesReady
+        current.metrics.furnacesReady === next.metrics.furnacesReady &&
+        current.adjacentChest?.id === next.adjacentChest?.id &&
+        current.adjacentChest?.x === next.adjacentChest?.x &&
+        current.adjacentChest?.y === next.adjacentChest?.y &&
+        current.adjacentChest?.inventory.ore === next.adjacentChest?.inventory.ore &&
+        current.adjacentChest?.inventory.plate === next.adjacentChest?.inventory.plate &&
+        current.adjacentChest?.inventory.used === next.adjacentChest?.inventory.used &&
+        current.adjacentChest?.inventory.capacity === next.adjacentChest?.inventory.capacity &&
+        current.adjacentChest?.remaining === next.adjacentChest?.remaining &&
+        current.inventory.ore === next.inventory.ore &&
+        current.inventory.plate === next.inventory.plate &&
+        current.inventory.used === next.inventory.used &&
+        current.inventory.capacity === next.inventory.capacity
       ) {
         return;
       }
@@ -746,12 +1207,18 @@ export default function App() {
     const nextFuel = getSimulationFuel(sim);
     const nextPlayer = getSimulationPlayer(sim);
     const nextMetrics = getSimulationMetrics(sim);
+    const nextAdjacentChest = getAdjacentChestSnapshot(sim, nextPlayer);
+    const getInventory = (sim as { getInventorySnapshot?: () => PlacementSnapshot['inventory'] })
+      .getInventorySnapshot;
+    const nextInventory = typeof getInventory === 'function' ? getInventory.call(sim) : null;
     setHudState({
       tick: nextTick,
       paused: nextPaused,
       ...(nextFuel === null ? {} : { fuel: nextFuel.fuel, maxFuel: nextFuel.maxFuel }),
       ...(nextPlayer === null ? {} : { player: nextPlayer }),
       ...(nextMetrics === null ? {} : { metrics: nextMetrics }),
+      ...(nextInventory === null ? {} : { inventory: nextInventory }),
+      ...(nextAdjacentChest === null ? { adjacentChest: null } : { adjacentChest: nextAdjacentChest }),
     });
   }, [setHudState]);
 
@@ -991,19 +1458,55 @@ export default function App() {
           if (outcome?.ok) {
             setFeedbackMessage({
               kind: 'success',
-              message: `Refueled +${PLAYER_REFUEL_AMOUNT}.`,
+              message: `Refueled +${PLAYER_REFUEL_AMOUNT} from furnace output.`,
             });
           } else {
             const reason = String(outcome?.reasonCode ?? 'blocked');
             const message =
               reason === 'fuel_full'
                 ? 'Fuel already full.'
-                : 'No iron-plate output nearby for refuel.';
+                : 'No smelted iron-plate output nearby for refuel.';
             setFeedbackMessage({
               kind: 'error',
               message,
             });
           }
+          syncHudFromSimulation();
+          event.preventDefault();
+        }
+      }
+
+      if (event.code === 'KeyE') {
+        const withDeposit = sim as { depositItem?: () => CoreActionOutcome };
+        if (typeof withDeposit.depositItem === 'function') {
+          const outcome = withDeposit.depositItem();
+          setFeedbackMessage({
+            kind: outcome?.ok === true ? 'success' : 'error',
+            message:
+              outcome?.reason === undefined || outcome?.reason === null
+                ? outcome?.ok === true
+                  ? 'Deposited from inventory.'
+                  : 'Deposit failed.'
+                : outcome.reason,
+          });
+          syncHudFromSimulation();
+          event.preventDefault();
+        }
+      }
+
+      if (event.code === 'KeyQ') {
+        const withPickup = sim as { pickupItem?: () => CoreActionOutcome };
+        if (typeof withPickup.pickupItem === 'function') {
+          const outcome = withPickup.pickupItem();
+          setFeedbackMessage({
+            kind: outcome?.ok === true ? 'success' : 'error',
+            message:
+              outcome?.reason === undefined || outcome?.reason === null
+                ? outcome?.ok === true
+                  ? 'Picked up from chest.'
+                  : 'Pickup failed.'
+                : outcome.reason,
+          });
           syncHudFromSimulation();
           event.preventDefault();
         }
@@ -1058,6 +1561,12 @@ export default function App() {
   const hudToolValue = hud.tool ?? 'None';
   const hudRotationValue = ROTATION_TO_DIRECTION[hud.rotation];
   const hudPauseValue = hud.paused ? 'Paused' : 'Running';
+  const hudChestInventory = hud.adjacentChest?.inventory ?? {
+    ore: 0,
+    plate: 0,
+    used: 0,
+    capacity: 1,
+  };
 
   return (
     <div
@@ -1193,6 +1702,53 @@ export default function App() {
             ore {hud.metrics.oreInTransit} · plate {hud.metrics.platesInTransit}
           </span>
         </div>
+        <div data-testid="hud-chests">
+          <span>Chests:</span>{' '}
+          <span
+            data-testid="hud-chests-value"
+            data-value={`${hud.metrics.chests}`}
+          >
+            {hud.metrics.chests}
+          </span>{' '}
+          <span style={{ opacity: 0.75 }}>
+            ore {hud.metrics.chestOre} · plate {hud.metrics.chestPlates}
+          </span>
+        </div>
+        <div data-testid="hud-inventory">
+          <span>Inv:</span>{' '}
+          <span
+            data-testid="hud-inventory-value"
+            data-value={`${hud.inventory.ore}/${hud.inventory.plate}/${hud.inventory.used}/${hud.inventory.capacity}`}
+          >
+            O:{hud.inventory.ore} P:{hud.inventory.plate} ({hud.inventory.used}/{hud.inventory.capacity})
+          </span>
+        </div>
+        {renderInventoryPanel('Inventory', hud.inventory)}
+        <div data-testid="hud-adjacent-chest">
+          <span>Chest:</span>{' '}
+          <span
+            data-testid="hud-adjacent-chest-value"
+            data-value={hud.adjacentChest === null ? 'none' : `${hud.adjacentChest.id}`}
+            style={{ opacity: hud.adjacentChest === null ? 0.8 : 1 }}
+          >
+            {hud.adjacentChest === null
+              ? 'none'
+              : `(${hud.adjacentChest.x}, ${hud.adjacentChest.y}) O:${hud.adjacentChest.inventory.ore} P:${hud.adjacentChest.inventory.plate}`}
+          </span>
+        </div>
+        {hud.adjacentChest === null ? (
+          <div style={{ marginBottom: 8, opacity: 0.9 }}>
+            <div style={{ opacity: 0.9 }}>Chest (nearby)</div>
+            <div style={{ marginTop: 4, height: 10, width: 130, border: '1px dashed rgba(255,255,255,0.35)', background: 'rgba(255,255,255,0.04)' }}>
+              no nearby chest
+            </div>
+          </div>
+        ) : (
+          renderInventoryPanel(
+            `Chest @ (${hud.adjacentChest.x}, ${hud.adjacentChest.y})`,
+            hudChestInventory,
+          )
+        )}
         <div data-testid="hud-furnace">
           <span>Furnaces:</span>{' '}
           <span
@@ -1203,7 +1759,10 @@ export default function App() {
           </span>
         </div>
         <div data-testid="hud-controls-note">
-          <span>Move:</span> WASD / Arrows · <span>Refuel:</span> F
+          <span>Move:</span> WASD / Arrows · <span>Refuel:</span> F (from furnace plate output) · <span>Chest:</span> Q pickup · E deposit
+        </div>
+        <div data-testid="hud-fuel-note" style={{ marginTop: 2, opacity: 0.75, fontSize: 11 }}>
+          Resource loop: iron-ore patches only in this slice. Coal is not yet implemented.
         </div>
       </div>
       {feedback === null ? null : (

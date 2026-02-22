@@ -7,7 +7,7 @@ type PaletteProps = {
   className?: string;
 };
 
-const BUTTON_ORDER: readonly EntityKind[] = ['Miner', 'Belt', 'Inserter', 'Furnace'];
+const BUTTON_ORDER: readonly EntityKind[] = ['Miner', 'Belt', 'Inserter', 'Furnace', 'Chest'];
 
 export default function Palette({
   kinds = ALL_ENTITY_KINDS,

@@ -124,6 +124,16 @@ type InserterState = Record<string, unknown> & {
   skipDropAtTick?: number;
 };
 
+type ChestState = Record<string, unknown> & {
+  capacity: number;
+  items: ItemKind[];
+  stored: Record<ItemKind, number>;
+  canAcceptItem: (item: string) => boolean;
+  acceptItem: (item: string) => boolean;
+  canProvideItem: (item: string) => boolean;
+  provideItem: (item: string) => string | null;
+};
+
 type BeltTransferPlan = {
   source: EntityBase;
   target: EntityBase;
@@ -152,6 +162,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> => {
 const isItemKind = (value: unknown): value is ItemKind => {
   return value === "iron-ore" || value === "iron-plate";
 };
+
+const CHEST_DEFAULT_CAPACITY = 24;
 
 const asNonNegativeInteger = (value: unknown): number => {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
@@ -275,6 +287,53 @@ const ensureInserterState = (entity: EntityBase): InserterState => {
 
   const phase = typeof state.state === "number" ? Math.floor(state.state) : 0;
   state.state = phase === 1 || phase === 2 || phase === 3 ? phase : 0;
+
+  return state;
+};
+
+const createChestState = (capacity = CHEST_DEFAULT_CAPACITY): ChestState => {
+  const normalizedCapacity =
+    Number.isInteger(capacity) && capacity > 0 ? capacity : CHEST_DEFAULT_CAPACITY;
+  const state: ChestState = {
+    capacity: normalizedCapacity,
+    items: [],
+    stored: {
+      "iron-ore": 0,
+      "iron-plate": 0,
+    },
+    canAcceptItem(item: string): boolean {
+      return isItemKind(item) && state.items.length < state.capacity;
+    },
+    acceptItem(item: string): boolean {
+      if (!state.canAcceptItem(item)) {
+        return false;
+      }
+      if (!isItemKind(item)) {
+        return false;
+      }
+
+      state.items.push(item);
+      state.stored[item] = Math.max(0, state.stored[item] + 1);
+      return true;
+    },
+    canProvideItem(item: string): boolean {
+      return isItemKind(item) && state.stored[item] > 0;
+    },
+    provideItem(item: string): string | null {
+      if (!state.canProvideItem(item) || !isItemKind(item)) {
+        return null;
+      }
+
+      const slotIndex = state.items.findIndex((entry) => entry === item);
+      if (slotIndex < 0) {
+        return null;
+      }
+
+      state.items.splice(slotIndex, 1);
+      state.stored[item] = Math.max(0, state.stored[item] - 1);
+      return item;
+    },
+  };
 
   return state;
 };
@@ -858,11 +917,25 @@ const registerFurnace = (): void => {
   });
 };
 
+const registerChest = (): void => {
+  if (getDefinition("chest") !== undefined) {
+    return;
+  }
+
+  registerEntity("chest", {
+    create: () => createChestState(),
+    update: () => {
+      // Chest state is mutated by inserter/furnace/player interactions.
+    },
+  });
+};
+
 const registerDefaults = (): void => {
   registerMiner();
   registerBelt();
   registerInserter();
   registerFurnace();
+  registerChest();
 };
 
 registerDefaults();
