@@ -73,7 +73,6 @@ export default function Palette({
       data-testid="palette"
       data-current-tool={currentTool}
       data-probe-state={probeState}
-      role="status"
       aria-live="polite"
     >
       <div className="palette-probe" data-testid="palette-probe" data-probe-state={probeState}>

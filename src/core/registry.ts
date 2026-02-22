@@ -1,7 +1,7 @@
 import type { EntityBase, EntityKind } from './types';
 
 export type RegisteredEntityKind = EntityKind | (string & {});
-export const CANONICAL_TICK_PHASES = ["miner", "belt", "inserter", "furnace"] as const;
+export const CANONICAL_TICK_PHASES = ["miner", "belt", "furnace", "inserter"] as const;
 export type CanonicalTickPhase = (typeof CANONICAL_TICK_PHASES)[number];
 
 export const SIM_TICK_CADENCE_MS = 1000 / 60;

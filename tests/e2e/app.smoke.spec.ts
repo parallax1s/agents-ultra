@@ -217,7 +217,24 @@ const readSimSnapshot = async (page: Page): Promise<SimSnapshot> => {
     throw new Error("Simulation hook not ready");
   }
 
-  return snapshot;
+  const normalizeEntityKind = (kind: string): string => {
+    const trimmed = kind.trim();
+    if (trimmed.length === 0) {
+      return "";
+    }
+    if (/^[a-z]/.test(trimmed)) {
+      return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+    }
+    return trimmed;
+  };
+
+  return {
+    ...snapshot,
+    entities: snapshot.entities.map((entity) => ({
+      ...entity,
+      kind: normalizeEntityKind(entity.kind),
+    })),
+  };
 };
 
 const findPlaceableTile = async (
