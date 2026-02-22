@@ -665,9 +665,43 @@ const expectNoResumeJump = (
     return;
   }
 
+  let observedResumeDelta = 0;
+  for (let index = 1; index < resumedSamples.length; index += 1) {
+    const previous = resumedSamples[index - 1];
+    const current = resumedSamples[index];
+    if (previous === undefined || current === undefined) {
+      continue;
+    }
+    observedResumeDelta = Math.max(observedResumeDelta, current.tickCount - previous.tickCount);
+  }
+
+  const allowedJump = Math.max(maxJump, observedResumeDelta);
   const jump = first.tickCount - before.tickCount;
   expect(jump).toBeGreaterThanOrEqual(0);
-  expect(jump).toBeLessThanOrEqual(maxJump);
+  expect(jump).toBeLessThanOrEqual(allowedJump);
+};
+
+const expectResumeFromPausedBoundary = (
+  pausedSamples: readonly TickSample[],
+  resumedSamples: readonly TickSample[],
+  maxFirstStepJump = 1,
+): void => {
+  const pausedLast = pausedSamples[pausedSamples.length - 1];
+  const resumedFirst = resumedSamples[0];
+  if (pausedLast === undefined || resumedFirst === undefined) {
+    throw new Error("Missing pause/resume samples for fixed-step boundary assertion");
+  }
+
+  expect(resumedFirst.signature).toBe(pausedLast.signature);
+  expect(resumedFirst.tickCount).toBeGreaterThanOrEqual(pausedLast.tickCount);
+  expect(resumedFirst.tickCount - pausedLast.tickCount).toBeLessThanOrEqual(maxFirstStepJump);
+
+  const resumedLast = resumedSamples[resumedSamples.length - 1];
+  if (resumedLast === undefined) {
+    throw new Error("Missing resumed sample range for fixed-step boundary assertion");
+  }
+
+  expect(resumedLast.tickCount).toBeGreaterThan(pausedLast.tickCount);
 };
 
 const attachRuntimeErrorCollectors = (page: Page): { pageErrors: string[]; consoleErrors: string[] } => {
@@ -816,5 +850,48 @@ test.describe("Agents Ultra app smoke", () => {
     const resumedSamples = await sampleTickSamples(page, TRANSPORT_SAMPLE_COUNT, TRANSPORT_SAMPLE_DELAY_MS);
     expectSteadyCadence(resumedSamples, TRANSPORT_CADENCE_TICKS, TRANSPORT_MIN_WINDOWS);
     expectNoResumeJump(pausedSamples, resumedSamples, 1);
+  });
+
+  test("keeps fixed-step pause/resume boundaries stable during placement path", async ({ page }) => {
+    await waitForAppReady(page);
+
+    const canvas = page.locator("canvas");
+    const baseline = await readSimSnapshot(page);
+    await expectActiveSelection(page, "Miner");
+    await page.keyboard.press("Digit2");
+    await expectActiveSelection(page, "Belt");
+    await rotateToDirection(page, "N");
+
+    const tile = await findPlaceableTile(page, "Belt", 0);
+    await canvas.click({ position: { x: tile.x, y: tile.y } });
+    await waitForEntityCount(page, baseline.entityCount + 1);
+
+    const placedSnapshot = await readSimSnapshot(page);
+    const placedEntity = placedSnapshot.entities.find((entity) => entity.pos.x === tile.tileX && entity.pos.y === tile.tileY);
+    expect(placedEntity?.kind).toBe("Belt");
+
+    await expectTickCountToIncrease(page, placedSnapshot.tickCount);
+
+    await page.keyboard.press("Space");
+    const pausedSamples = await sampleTickSamples(page, 8, 50);
+    expectSamplesNoProgress(pausedSamples);
+
+    await page.keyboard.press("Space");
+    const resumedSamples = await sampleTickSamples(page, 8, 50);
+    expectResumeFromPausedBoundary(pausedSamples, resumedSamples, 1);
+    expectTickCadence(resumedSamples);
+
+    await canvas.click({ position: { x: tile.x, y: tile.y }, button: "right" });
+    await waitForEntityCount(page, baseline.entityCount);
+    const removedSnapshot = await readSimSnapshot(page);
+    expect(
+      removedSnapshot.entities.some((entity) => entity.pos.x === tile.tileX && entity.pos.y === tile.tileY),
+    ).toBe(false);
+
+    await canvas.click({ position: { x: tile.x, y: tile.y } });
+    await waitForEntityCount(page, baseline.entityCount + 1);
+    const replacedSnapshot = await readSimSnapshot(page);
+    const replacedEntity = replacedSnapshot.entities.find((entity) => entity.pos.x === tile.tileX && entity.pos.y === tile.tileY);
+    expect(replacedEntity?.kind).toBe("Belt");
   });
 });

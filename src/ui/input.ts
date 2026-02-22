@@ -54,6 +54,7 @@ export type InputController = {
   onHover(cb: (coord: GridCoord | null) => void): () => void;
   onClick(cb: (coord: GridCoord) => void): () => void;
   onRotate(cb: () => void): () => void;
+  onPauseToggle(cb: () => void): () => void;
   toGrid(pt: { x: number; y: number }): GridCoord | null;
   destroy(): void;
 };
@@ -90,6 +91,7 @@ export const attachInput = ({ app, stage, metrics }: AttachInputArgs): InputCont
   const hoverCallbacks = new Set<(coord: GridCoord | null) => void>();
   const clickCallbacks = new Set<(coord: GridCoord) => void>();
   const rotateCallbacks = new Set<() => void>();
+  const pauseToggleCallbacks = new Set<() => void>();
 
   const toGrid = (pt: { x: number; y: number }): GridCoord | null => {
     const { tileSize, gridSize } = metrics;
@@ -154,8 +156,23 @@ export const attachInput = ({ app, stage, metrics }: AttachInputArgs): InputCont
     event.code === "KeyR" || event.key === "r" || event.key === "R"
   );
 
+  const isPauseToggleKey = (event: KeyEventLike): boolean => (
+    event.code === "Space" || event.key === " "
+  );
+
   const handleKeyDown: KeyDownListener = (event) => {
     if (!isRotateKey(event) || event.repeat === true) {
+      if (!isPauseToggleKey(event) || event.repeat === true) {
+        return;
+      }
+
+      for (const callback of pauseToggleCallbacks) {
+        callback();
+      }
+
+      if (typeof event.preventDefault === "function") {
+        event.preventDefault();
+      }
       return;
     }
 
@@ -193,6 +210,13 @@ export const attachInput = ({ app, stage, metrics }: AttachInputArgs): InputCont
     };
   };
 
+  const onPauseToggle = (cb: () => void): (() => void) => {
+    pauseToggleCallbacks.add(cb);
+    return () => {
+      pauseToggleCallbacks.delete(cb);
+    };
+  };
+
   const destroy = (): void => {
     stage.off("pointermove", handlePointerMove);
     stage.off("pointerdown", handlePointerDown);
@@ -200,12 +224,14 @@ export const attachInput = ({ app, stage, metrics }: AttachInputArgs): InputCont
     hoverCallbacks.clear();
     clickCallbacks.clear();
     rotateCallbacks.clear();
+    pauseToggleCallbacks.clear();
   };
 
   return {
     onHover,
     onClick,
     onRotate,
+    onPauseToggle,
     toGrid,
     destroy,
   };

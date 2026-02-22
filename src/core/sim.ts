@@ -9,6 +9,7 @@ import type {
   EntityBase,
   EntityKind,
   GridCoord,
+  StartupProbeState,
 } from "./types";
 
 type CreateSimConfig = {
@@ -111,6 +112,49 @@ export const createSim = ({ width, height, seed, map }: CreateSimConfig = {}) =>
   let elapsedMs = 0;
   let runningStep = false;
   const insertionOrderById = new Map<string, number>();
+  let startupProbeState: StartupProbeState = { phase: "init" };
+
+  const normalizeErrorMessage = (cause: unknown): string | undefined => {
+    if (cause instanceof Error) {
+      return cause.message || undefined;
+    }
+    if (typeof cause === "string") {
+      return cause || undefined;
+    }
+    return undefined;
+  };
+
+  const advanceStartupProbeState = (): void => {
+    if (startupProbeState.phase === "error") {
+      return;
+    }
+
+    if (startupProbeState.phase === "init") {
+      startupProbeState = { phase: "sim-ready" };
+      return;
+    }
+
+    if (startupProbeState.phase === "sim-ready" && tick >= 1) {
+      startupProbeState = { phase: "renderer-ready" };
+      return;
+    }
+
+    if (startupProbeState.phase === "renderer-ready" && tick >= 2) {
+      startupProbeState = { phase: "input-ready" };
+      return;
+    }
+
+    if (startupProbeState.phase === "input-ready") {
+      startupProbeState = { phase: "running" };
+    }
+  };
+
+  const markStartupProbeError = (cause: unknown): void => {
+    startupProbeState = {
+      phase: "error",
+      error: normalizeErrorMessage(cause),
+    };
+  };
 
   type CellIndex = {
     readonly entitiesByCell: Map<string, Set<string>>;
@@ -382,6 +426,7 @@ export const createSim = ({ width, height, seed, map }: CreateSimConfig = {}) =>
   const runTick = (): void => {
     runningStep = true;
     try {
+      advanceStartupProbeState();
       const tickStartEntitySnapshotById = new Map<string, EntityBase>();
       const tickStartEntityIdsByCell = new Map<string, Set<string>>();
 
@@ -502,7 +547,11 @@ export const createSim = ({ width, height, seed, map }: CreateSimConfig = {}) =>
       tick += 1;
       tickCount += 1;
       elapsedMs += SIM_TICK_CADENCE_MS;
+      advanceStartupProbeState();
       publishPublicState();
+    } catch (error) {
+      markStartupProbeError(error);
+      throw error;
     } finally {
       runningStep = false;
     }
@@ -560,6 +609,12 @@ export const createSim = ({ width, height, seed, map }: CreateSimConfig = {}) =>
     },
     isPaused(): boolean {
       return paused;
+    },
+    getStartupProbe(): StartupProbeState {
+      return {
+        phase: startupProbeState.phase,
+        ...(startupProbeState.error === undefined ? {} : { error: startupProbeState.error }),
+      };
     },
     get tick(): number {
       return tick;

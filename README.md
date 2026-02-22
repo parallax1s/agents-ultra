@@ -17,6 +17,7 @@ For a full implemented-vs-missing snapshot, see `FEATURE_MATRIX.md`.
 
 ## Prerequisites
 - Node.js `20+`
+- Vite `6` (via project devDependency)
 - npm (bundled with Node.js)
 
 ## Setup
@@ -57,11 +58,11 @@ Use this focused checklist before merging movement-related changes.
 
 ### Fast local verification targets
 1. `npm run typecheck`
-2. `npx vitest run tests/sim-compat.test.ts tests/pipeline.test.ts`
-3. `npx vitest run tests/sim-compat.test.ts -t "does not let a belt receive and forward on the same 15-tick boundary in single-hop chains"`
-4. `npx vitest run tests/sim-compat.test.ts -t "enforces exact miner->belt->inserter->furnace progression at 60/20/15/180 boundaries"`
-5. `npx vitest run tests/pipeline.test.ts -t "advances at most one belt tile per 15-tick cadence window"`
-6. `npx vitest run tests/pipeline.test.ts -t "halts transport movement while paused and resumes from the exact prior cadence phase"`
+2. `npm run test:movement:regression`
+3. `npm run test:movement:regression -- tests/sim-compat.test.ts -t "does not let a belt receive and forward on the same 15-tick boundary in single-hop chains"`
+4. `npm run test:movement:regression -- tests/sim-compat.test.ts -t "enforces exact miner->belt->inserter->furnace progression at 60/20/15/180 boundaries"`
+5. `npm run test:movement:regression -- tests/pipeline.test.ts -t "advances at most one belt tile per 15-tick cadence window"`
+6. `npm run test:movement:regression -- tests/pipeline.test.ts -t "halts transport movement while paused and resumes from the exact prior cadence phase"`
 
 ## Optional E2E (Playwright)
 ```bash
@@ -95,7 +96,7 @@ When to run it:
 - Before merge for any movement, cadence, pause/resume, transport, or simulation-loop change.
 - As routine local hygiene before pushing gameplay logic changes.
 
-This gate runs the movement-focused regression subset (`map/sim/sim-compat` unit coverage plus movement smoke E2E).
+This gate runs the movement-focused deterministic unit/integration regression subset. For browser smoke coverage, run `npm run test:movement:e2e` separately.
 
 Expected behavior when dev dependencies are missing:
 - `npm run test`: skips missing optional test suites and exits successfully.

@@ -1,18 +1,18 @@
-import { getRecipeForInput } from '../recipes';
+import { FURNACE_INPUT_ITEM, FURNACE_OUTPUT_ITEM, isItemKind, type ItemKind } from "../core/types";
 
 export const FURNACE_TYPE = 'furnace';
 const FURNACE_SMELT_TICKS = 180;
 
 export class Furnace {
-  input: string | null = null;
-  output: string | null = null;
+  input: ItemKind | null = null;
+  output: ItemKind | null = null;
   private crafting = false;
-  private recipeOutput: string | null = null;
   private smeltProgressTicks = 0;
 
   canAcceptItem(item: string): boolean {
     return (
-      getRecipeForInput(item) !== undefined &&
+      isItemKind(item) &&
+      item === FURNACE_INPUT_ITEM &&
       this.input === null &&
       !this.crafting &&
       this.output === null
@@ -24,15 +24,15 @@ export class Furnace {
       return false;
     }
 
-    this.input = item;
+    this.input = item as ItemKind;
     return true;
   }
 
   canProvideItem(item: string): boolean {
-    return item === 'iron-plate' && this.output === 'iron-plate';
+    return isItemKind(item) && item === FURNACE_OUTPUT_ITEM && this.output === FURNACE_OUTPUT_ITEM;
   }
 
-  provideItem(item: string): string | null {
+  provideItem(item: string): ItemKind | null {
     if (!this.canProvideItem(item)) {
       return null;
     }
@@ -47,12 +47,10 @@ export class Furnace {
       return;
     }
 
-    const recipe = getRecipeForInput(this.input);
-    if (recipe === undefined) {
+    if (this.input !== FURNACE_INPUT_ITEM) {
       return;
     }
 
-    this.recipeOutput = recipe.output;
     this.crafting = true;
     this.smeltProgressTicks = 0;
     this.input = null;
@@ -65,7 +63,6 @@ export class Furnace {
   private resetCraftingState(): void {
     this.crafting = false;
     this.smeltProgressTicks = 0;
-    this.recipeOutput = null;
   }
 
   update(_nowMs: number = 0): void {
@@ -88,13 +85,8 @@ export class Furnace {
       return;
     }
 
-    const completedOutput = this.recipeOutput;
     this.resetCraftingState();
-    if (completedOutput === null) {
-      return;
-    }
-
-    this.output = completedOutput;
+    this.output = FURNACE_OUTPUT_ITEM;
   }
 
   get inputOccupied(): boolean {

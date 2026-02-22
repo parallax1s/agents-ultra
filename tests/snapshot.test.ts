@@ -585,6 +585,51 @@ describe("createSnapshot", () => {
     expect(postCommitRead.entities[0].items).toEqual(["iron-ore", null, null] as ReadonlyArray<ItemKind | null>);
   });
 
+  it("reuses immutable snapshots for stable sim references until a new tick commits", () => {
+    const liveBeltEntity = {
+      id: "belt-live",
+      kind: "belt",
+      pos: { x: 1, y: 1 },
+      rot: "E" as Direction,
+      state: {
+        items: [null, "iron-ore", null] as Array<ItemKind | null>,
+      },
+    };
+
+    const sim = {
+      width: 4,
+      height: 4,
+      tileSize: 16,
+      tick: 0,
+      tickCount: 0,
+      elapsedMs: 0,
+      getAllEntities: () => [liveBeltEntity],
+    };
+
+    const firstRead = createSnapshot(sim);
+    const firstItems = firstRead.entities[0].items ?? [];
+    expect(firstItems).toEqual([null, "iron-ore", null] as ReadonlyArray<ItemKind | null>);
+
+    liveBeltEntity.state.items = ["iron-plate", null, null];
+    const preCommitRead = createSnapshot(sim);
+
+    expect(preCommitRead).toBe(firstRead);
+    expect(preCommitRead.entities[0].items).toEqual([null, "iron-ore", null] as ReadonlyArray<ItemKind | null>);
+    expect(() => {
+      (preCommitRead.entities[0].items as Array<ItemKind | null>)[0] = "iron-plate";
+    }).toThrow();
+
+    sim.tick = 1;
+    sim.tickCount = 1;
+    sim.elapsedMs = TICK_MS;
+
+    const postCommitRead = createSnapshot(sim);
+    expect(postCommitRead).not.toBe(firstRead);
+    expect(postCommitRead.time.tick).toBe(1);
+    expect(postCommitRead.time.tickCount).toBe(1);
+    expect(postCommitRead.entities[0].items).toEqual(["iron-plate", null, null] as ReadonlyArray<ItemKind | null>);
+  });
+
   it("uses committed tick boundaries for snapshot timing", () => {
     const boundarySnapshot = createSnapshot({
       width: 12,

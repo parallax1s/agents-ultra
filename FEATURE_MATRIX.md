@@ -5,7 +5,7 @@ Last updated: 2026-02-22
 ## Current Scope Summary
 - Total listed feature areas: 14
 - Implemented: 9
-- In progress: 1
+- In progress: 2
 - Not started: 4
 
 ## Implemented
@@ -40,7 +40,12 @@ Last updated: 2026-02-22
 
 ## In Progress
 
-1. **Feature status dashboard accuracy pass**
+1. **Refuel + coal transition**
+   - Keep `F` refuel loop stable while adding coal.
+   - Refuel currently consumes **iron-plate** from furnace output.
+   - Coal generation and burner-fuel semantics are not implemented yet.
+
+2. **Feature status dashboard accuracy pass**
    - Consolidating one source-of-truth feature tracker with explicit counts and ownership.
    - Goal: align docs, runtime behavior, and roadmap visibility.
 
@@ -69,6 +74,15 @@ Last updated: 2026-02-22
 - "In progress" means code is currently being iterated and may change before the next checkpoint.
 - "Not started" means deferred by scope and ready for next roadmap stage.
 
-## Direct Answer to Current Gameplay Questions
-- **Current refuel behavior**: `F` still refuels from nearby furnace output, consuming **iron-plate**, not coal.
-- **Coal availability**: Coal is not currently in the active loop. Ore-only is the active resource for now (`iron-ore`).
+## Programmatic Testability
+- Type safety gate: `npm run typecheck`
+- Build gate: `npm run build`
+- Maintenance/local regression gate: `npm run test`
+- Movement-focused deterministic regression gate: `npm run test:movement`
+- Optional movement smoke E2E gate: `npm run test:movement:e2e`
+- Strict verification mode: `npm run test:strict`
+
+## Notes
+- Current tests intentionally lock deterministic behavior for the implemented vertical slice.
+- Deferred systems are intentionally out of scope for this slice and must not be used as QA failure criteria.
+- Future gameplay additions should always ship with matching regression tests in `tests/sim*.test.ts`, `tests/pipeline.test.ts`, and targeted `tests/e2e/*.spec.ts`.

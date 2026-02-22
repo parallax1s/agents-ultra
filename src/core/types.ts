@@ -38,6 +38,14 @@ export const rotateDirection = (direction: Direction, steps = 1): Direction => {
 
 export type ItemKind = 'iron-ore' | 'iron-plate';
 
+export const SLICE_ITEM_KINDS = ['iron-ore', 'iron-plate'] as const satisfies readonly ItemKind[];
+
+export const FURNACE_INPUT_ITEM = 'iron-ore' as const;
+export const FURNACE_OUTPUT_ITEM = 'iron-plate' as const;
+
+export const isItemKind = (value: string): value is ItemKind =>
+  (SLICE_ITEM_KINDS as readonly string[]).includes(value);
+
 export type EntityKind = 'resource' | 'miner' | 'belt' | 'inserter' | 'furnace' | 'chest';
 
 export interface EntityBase {
@@ -47,3 +55,25 @@ export interface EntityBase {
   rot: Direction;
   state?: unknown;
 }
+
+export const STARTUP_PROBE_PHASES = [
+  "init",
+  "sim-ready",
+  "renderer-ready",
+  "input-ready",
+  "running",
+  "error",
+] as const;
+
+export type StartupProbePhase = (typeof STARTUP_PROBE_PHASES)[number];
+
+export type StartupProbeState = Readonly<{
+  phase: StartupProbePhase;
+  error?: string;
+}>;
+
+export type SimCommittedTiming = Readonly<{
+  tick: number;
+  tickCount: number;
+  elapsedMs: number;
+}>;

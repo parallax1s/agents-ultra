@@ -70,11 +70,12 @@
     {
       "id": "run-instructions",
       "title": "Run Instructions",
-      "description": "Document local development and test commands for Node 20+, Vite 5, and Vitest so the vertical slice can be started and validated quickly.",
+      "description": "Document local development and validation commands for Node 20+ and Vite 6 so the vertical slice can be started and checked quickly.",
       "status": "complete",
       "acceptanceHints": [
         "Instructions clearly state Node.js 20+ requirement.",
-        "Includes commands for install, dev run, and test execution.",
+        "Instructions clearly state Vite 6 expectations for local run/build workflows.",
+        "Includes script-based commands for install, dev run, deterministic regression checks, and strict verification.",
         "Mentions fixed-step simulation expectations for manual validation."
       ]
     }

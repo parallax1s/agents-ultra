@@ -1,7 +1,16 @@
 import { getDefinition, registerEntity } from "../src/core/registry";
 import { createSim } from "../src/core/sim";
 import { attachInput } from "../src/ui/input";
-import { rotateDirection, DIRECTION_SEQUENCE, type Direction, type EntityBase, type ItemKind } from "../src/core/types";
+import { createPlacementController, type Simulation } from "../src/ui/placement";
+import {
+  rotateDirection,
+  DIRECTION_SEQUENCE,
+  DIRECTION_VECTORS,
+  OPPOSITE_DIRECTION,
+  type Direction,
+  type EntityBase,
+  type ItemKind,
+} from "../src/core/types";
 import "../src/entities/all";
 
 let kindCounter = 0;
@@ -743,6 +752,63 @@ describe("simulation registry and loop", () => {
     expect(fineGrainedChunks).toEqual(singleChunk);
   });
 
+  test("keeps exact 60 TPS tick cadence deterministic across repeated chunking patterns", () => {
+    const kind = nextKind("miner-cadence-repeatability");
+    const tickMs = 1000 / 60;
+
+    registerEntity(kind, {
+      create: () => ({ updates: 0, checksum: 0 }),
+      update: (entity: unknown) => {
+        if (typeof entity !== "object" || entity === null || !("state" in entity) || !("pos" in entity)) {
+          throw new Error("Unexpected entity shape passed to update");
+        }
+
+        const typedEntity = entity as {
+          state?: { updates?: number; checksum?: number };
+          pos: { x: number; y: number };
+        };
+        if (typedEntity.state === undefined) {
+          typedEntity.state = { updates: 0, checksum: 0 };
+        }
+
+        const updates = (typedEntity.state.updates ?? 0) + 1;
+        typedEntity.state.updates = updates;
+        if (updates % 4 === 0) {
+          typedEntity.pos.x += 1;
+        }
+        typedEntity.state.checksum = (typedEntity.state.checksum ?? 0) + updates * 7 + typedEntity.pos.x * 13;
+      },
+    });
+
+    const runScenario = (
+      chunkFractionsInTwelfths: number[],
+    ): { tickCount: number; elapsedMs: number; world: WorldEntitySnapshot[] } => {
+      const sim = createSim({ width: 24, height: 24, seed: 77 });
+      sim.addEntity({ kind, pos: { x: 1, y: 1 } } as Parameters<typeof sim.addEntity>[0]);
+
+      for (const fraction of chunkFractionsInTwelfths) {
+        sim.step((fraction * tickMs) / 12);
+      }
+
+      return {
+        tickCount: sim.tickCount,
+        elapsedMs: sim.elapsedMs,
+        world: snapshotWorld(sim),
+      };
+    };
+
+    const baseline = runScenario([720]);
+    expect(baseline.tickCount).toBe(60);
+    expect(baseline.elapsedMs).toBeCloseTo(60 * tickMs, 6);
+
+    const chunked = runScenario([7, 11, 13, 19, 23, 29, 31, 37, 41, 47, 53, 409]);
+    expect(chunked).toEqual(baseline);
+
+    for (let run = 0; run < 5; run += 1) {
+      expect(runScenario([5, 7, 9, 11, 13, 17, 19, 23, 616])).toEqual(baseline);
+    }
+  });
+
   test("resolves sim-level movement contention deterministically from stable position ordering", () => {
     const tickMs = 1000 / 60;
     const kind = nextKind("sim-contender");
@@ -863,6 +929,75 @@ describe("simulation registry and loop", () => {
     expect(sim.tickCount).toBe(snapshotBeforePause.tickCount + 3);
     expect(sim.elapsedMs).toBeCloseTo(snapshotBeforePause.elapsedMs + tickMs * 3);
     expect(getUpdateCount(sim.getEntityById(id))).toBe(updatesBeforePause + 3);
+  });
+
+  test("maintains identical post-resume state across repeated pause/resume boundary runs", () => {
+    const kind = nextKind("miner-pause-resume-repeatability");
+    const tickMs = 1000 / 60;
+
+    registerEntity(kind, {
+      create: () => ({ updates: 0 }),
+      update: (entity: unknown) => {
+        if (typeof entity !== "object" || entity === null || !("state" in entity) || !("pos" in entity)) {
+          throw new Error("Unexpected entity shape passed to update");
+        }
+
+        const typedEntity = entity as {
+          state?: { updates?: number };
+          pos: { x: number; y: number };
+        };
+        const updates = (typedEntity.state?.updates ?? 0) + 1;
+        typedEntity.state = { ...(typedEntity.state ?? {}), updates };
+        if (updates % 2 === 0) {
+          typedEntity.pos.y += 1;
+        }
+      },
+    });
+
+    const runScenario = (): {
+      tickCount: number;
+      elapsedMs: number;
+      beforePause: WorldEntitySnapshot[];
+      duringPause: WorldEntitySnapshot[];
+      afterResume: WorldEntitySnapshot[];
+    } => {
+      const sim = createSim({ width: 16, height: 16, seed: 81 });
+      sim.addEntity({ kind, pos: { x: 1, y: 1 } } as Parameters<typeof sim.addEntity>[0]);
+
+      sim.step(tickMs * 4 + tickMs / 2);
+      const beforePause = snapshotWorld(sim);
+      const beforeTick = sim.tickCount;
+      const beforeElapsed = sim.elapsedMs;
+
+      sim.pause();
+      sim.step(tickMs * 30);
+      sim.step(tickMs / 5);
+      const duringPause = snapshotWorld(sim);
+      expect(sim.tickCount).toBe(beforeTick);
+      expect(sim.elapsedMs).toBe(beforeElapsed);
+      expect(duringPause).toEqual(beforePause);
+
+      sim.resume();
+      sim.step(tickMs / 2);
+      sim.step(3 * tickMs);
+
+      return {
+        tickCount: sim.tickCount,
+        elapsedMs: sim.elapsedMs,
+        beforePause,
+        duringPause,
+        afterResume: snapshotWorld(sim),
+      };
+    };
+
+    const first = runScenario();
+    const second = runScenario();
+    const third = runScenario();
+
+    expect(first).toEqual(second);
+    expect(first).toEqual(third);
+    expect(first.tickCount).toBe(8);
+    expect(first.elapsedMs).toBeCloseTo(8 * tickMs, 6);
   });
 
   test("enforces exact miner->belt->inserter->furnace cadence at 60/20/15/180 checkpoints", () => {
@@ -1310,6 +1445,141 @@ describe("simulation registry and loop", () => {
     expect(rotateDirection("S", -5)).toBe("E");
   });
 
+  test("keeps direction vector and side-mapping helpers consistent for all four orientations", () => {
+    for (let i = 0; i < DIRECTION_SEQUENCE.length; i += 1) {
+      const facing = DIRECTION_SEQUENCE[i];
+      const right = DIRECTION_SEQUENCE[(i + 1) % DIRECTION_SEQUENCE.length];
+      const back = DIRECTION_SEQUENCE[(i + 2) % DIRECTION_SEQUENCE.length];
+      const left = DIRECTION_SEQUENCE[(i + 3) % DIRECTION_SEQUENCE.length];
+
+      expect(rotateDirection(facing, 1)).toBe(right);
+      expect(rotateDirection(facing, 2)).toBe(back);
+      expect(rotateDirection(facing, -1)).toBe(left);
+      expect(OPPOSITE_DIRECTION[facing]).toBe(back);
+
+      const frontVector = DIRECTION_VECTORS[facing];
+      const rightVector = DIRECTION_VECTORS[right];
+      const backVector = DIRECTION_VECTORS[back];
+      const leftVector = DIRECTION_VECTORS[left];
+
+      expect(frontVector.x + backVector.x).toBe(0);
+      expect(frontVector.y + backVector.y).toBe(0);
+      expect(rightVector.x + leftVector.x).toBe(0);
+      expect(rightVector.y + leftVector.y).toBe(0);
+      expect(Math.abs(frontVector.x * rightVector.x + frontVector.y * rightVector.y)).toBe(0);
+    }
+  });
+
+  test("keeps 60 TPS phase order stable across chunk patterns and pause/resume invariance", () => {
+    const tickMs = 1000 / 60;
+    const orderedPhases = ["miner", "belt", "furnace", "inserter", "unphased"] as const;
+    type PhaseLabel = (typeof orderedPhases)[number];
+    type TraceEvent = { tick: number; phase: PhaseLabel };
+
+    const runScenario = (chunkFractionsInTwelfths: number[]): {
+      trace: TraceEvent[];
+      tickCount: number;
+      elapsedMs: number;
+      world: Array<{ id: string; pos: { x: number; y: number }; rot: Direction; updates: number }>;
+    } => {
+      const trace: TraceEvent[] = [];
+      const sim = createSim({ width: 8, height: 8, seed: 91 });
+      const kinds: Record<PhaseLabel, string> = {
+        miner: nextKind("phase-order-miner"),
+        belt: nextKind("phase-order-belt"),
+        furnace: nextKind("phase-order-furnace"),
+        inserter: nextKind("phase-order-inserter"),
+        unphased: nextKind("phase-order-unphased"),
+      };
+
+      const registerPhaseProbe = (
+        phase: PhaseLabel,
+        tickPhase?: "miner" | "belt" | "furnace" | "inserter",
+      ): void => {
+        registerEntity(kinds[phase], {
+          ...(tickPhase === undefined ? {} : { tickPhase }),
+          create: () => ({ updates: 0 }),
+          update: (entity: EntityBase, _dtMs: number, context: { tick: number }) => {
+            const state = entity.state as { updates?: number } | undefined;
+            entity.state = { updates: (state?.updates ?? 0) + 1 };
+            trace.push({ tick: context.tick, phase });
+          },
+        });
+      };
+
+      registerPhaseProbe("miner", "miner");
+      registerPhaseProbe("belt", "belt");
+      registerPhaseProbe("furnace", "furnace");
+      registerPhaseProbe("inserter", "inserter");
+      registerPhaseProbe("unphased");
+
+      sim.addEntity({ kind: kinds.unphased, pos: { x: 0, y: 0 } });
+      sim.addEntity({ kind: kinds.inserter, pos: { x: 1, y: 0 } });
+      sim.addEntity({ kind: kinds.furnace, pos: { x: 2, y: 0 } });
+      sim.addEntity({ kind: kinds.belt, pos: { x: 3, y: 0 } });
+      sim.addEntity({ kind: kinds.miner, pos: { x: 4, y: 0 } });
+
+      for (const fraction of chunkFractionsInTwelfths) {
+        sim.step((fraction * tickMs) / 12);
+      }
+
+      const beforePause = {
+        tickCount: sim.tickCount,
+        elapsedMs: sim.elapsedMs,
+        world: snapshotWorld(sim),
+        traceLength: trace.length,
+      };
+      sim.pause();
+      sim.step(11 * tickMs);
+      sim.step(tickMs / 3);
+      expect(sim.tickCount).toBe(beforePause.tickCount);
+      expect(sim.elapsedMs).toBe(beforePause.elapsedMs);
+      expect(snapshotWorld(sim)).toEqual(beforePause.world);
+      expect(trace).toHaveLength(beforePause.traceLength);
+
+      sim.resume();
+      sim.step(tickMs);
+
+      return {
+        trace,
+        tickCount: sim.tickCount,
+        elapsedMs: sim.elapsedMs,
+        world: sim
+          .getAllEntities()
+          .map((entity) => ({
+            id: entity.id,
+            pos: { x: entity.pos.x, y: entity.pos.y },
+            rot: entity.rot,
+            updates:
+              typeof entity.state === "object" &&
+              entity.state !== null &&
+              "updates" in entity.state &&
+              typeof (entity.state as { updates?: unknown }).updates === "number"
+                ? ((entity.state as { updates: number }).updates ?? 0)
+                : 0,
+          }))
+          .sort((left, right) => Number(left.id) - Number(right.id)),
+      };
+    };
+
+    const baseline = runScenario([720]);
+    const chunked = runScenario([7, 11, 13, 19, 23, 29, 31, 37, 41, 47, 53, 409]);
+    const repeated = runScenario([5, 7, 9, 11, 13, 17, 19, 23, 616]);
+
+    expect(chunked).toEqual(baseline);
+    expect(repeated).toEqual(baseline);
+    expect(baseline.tickCount).toBe(61);
+    expect(baseline.elapsedMs).toBeCloseTo(61 * tickMs, 6);
+    expect(baseline.trace).toHaveLength(61 * orderedPhases.length);
+
+    for (let tick = 0; tick < 61; tick += 1) {
+      const phases = baseline.trace
+        .filter((event) => event.tick === tick)
+        .map((event) => event.phase);
+      expect(phases).toEqual(orderedPhases);
+    }
+  });
+
   test("applies one deterministic rotation step per R key action", () => {
     const kind = nextKind("miner-rotate-input");
     registerEntity(kind, {
@@ -1349,6 +1619,73 @@ describe("simulation registry and loop", () => {
     expect(entity.rot).toBe("S");
 
     controller.destroy();
+  });
+
+  test("cycles rotation in exact N->E->S->W->N order for non-repeat R actions", () => {
+    const kind = nextKind("miner-rotate-sequence-input");
+    registerEntity(kind, {
+      create: () => ({}),
+      update: () => {
+        // no-op
+      },
+    });
+
+    const sim = createSim();
+    const minerId = sim.addEntity({
+      kind,
+      pos: { x: 1, y: 1 },
+      rot: "N",
+    });
+    const entity = sim.getEntityById(minerId) as { rot: Direction };
+    const observed: Direction[] = [entity.rot];
+
+    const stage = createMockInputStage();
+    const controller = attachInput({
+      app: {},
+      stage,
+      metrics: { tileSize: 16, gridSize: { cols: 8, rows: 8 } },
+    });
+
+    const detachRotate = controller.onRotate(() => {
+      entity.rot = rotateDirection(entity.rot);
+      observed.push(entity.rot);
+    });
+
+    stage.emit("keydown", { code: "KeyR", repeat: false });
+    stage.emit("keydown", { code: "KeyR", repeat: false });
+    stage.emit("keydown", { code: "KeyR", repeat: false });
+    stage.emit("keydown", { code: "KeyR", repeat: false });
+
+    expect(observed).toEqual(["N", "E", "S", "W", "N"]);
+
+    detachRotate();
+    controller.destroy();
+  });
+
+  test("blocks right-click removal on bare resource nodes without mutation side effects", () => {
+    const resourceTile = { x: 3, y: 4 };
+    let removeCalls = 0;
+
+    const sim: Simulation = {
+      canPlace: () => true,
+      addEntity: () => undefined,
+      removeEntity: () => {
+        removeCalls += 1;
+        return { ok: true, reasonCode: "removed" };
+      },
+      canRemove: (tile) => !(tile.x === resourceTile.x && tile.y === resourceTile.y),
+      hasEntityAt: () => false,
+      isResourceTile: (tile) => tile.x === resourceTile.x && tile.y === resourceTile.y,
+    };
+
+    const controller = createPlacementController(sim, { cols: 20, rows: 20 });
+    controller.setCursor(resourceTile);
+    const outcome = controller.clickRMB();
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.reason).toBe("cannot_remove_resource");
+    expect(outcome.token).toBe("blocked-resource");
+    expect(removeCalls).toBe(0);
   });
 
   test("applies deterministic rotation with legacy two-arg addEntity entrypoint", () => {

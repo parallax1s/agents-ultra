@@ -1,4 +1,12 @@
-import type { Direction, EntityBase, EntityKind, GridCoord, ItemKind } from "./types";
+import type {
+  Direction,
+  EntityBase,
+  EntityKind,
+  GridCoord,
+  ItemKind,
+  SimCommittedTiming,
+  StartupProbeState,
+} from "./types";
 
 export type SnapshotGrid = {
   readonly width: number;
@@ -11,6 +19,8 @@ export type SnapshotTiming = {
   readonly elapsedMs: number;
   readonly tickCount: number;
 };
+
+export type SnapshotProbe = StartupProbeState;
 
 export type SnapshotOreCell = {
   readonly x: number;
@@ -43,6 +53,7 @@ export type SnapshotPlayer = {
 export type Snapshot = Readonly<{
   readonly grid: SnapshotGrid;
   readonly time: SnapshotTiming;
+  readonly probe: SnapshotProbe;
   readonly ore: ReadonlyArray<Readonly<SnapshotOreCell>>;
   readonly entities: ReadonlyArray<SnapshotEntity>;
   readonly player?: SnapshotPlayer;
@@ -63,6 +74,7 @@ type SnapshotSim = {
   readonly tickCount?: number;
   readonly elapsedMs?: number;
   readonly getPlacementSnapshot?: () => { tick?: unknown; tickCount?: unknown };
+  readonly getStartupProbe?: () => unknown;
   readonly map?: SnapshotMap;
   readonly getMap?: () => SnapshotMap;
   readonly player?: unknown;
@@ -75,9 +87,13 @@ type SnapshotInserterState = "idle" | "pickup" | "swing" | "drop";
 const DEFAULT_TILE_SIZE = 32;
 
 type SnapshotPublicationState = {
-  tick: number;
-  tickCount: number;
-  elapsedMs: number;
+  timing: SimCommittedTiming;
+  snapshotProbe?: SnapshotProbe;
+  snapshot?: Snapshot;
+  snapshotWidth?: number;
+  snapshotHeight?: number;
+  snapshotTileSize?: number;
+  snapshotMap?: SnapshotMap;
 };
 
 const snapshotStateBySim = new WeakMap<object, SnapshotPublicationState>();
@@ -104,34 +120,44 @@ const asCommittedTiming = (
   proposedTick: number,
   proposedTickCount: number,
   proposedElapsedMs: number,
-): SnapshotTiming => {
+): SnapshotPublicationState => {
   if (!isObject(sim)) {
     return {
-      tick: proposedTick,
-      tickCount: proposedTickCount,
-      elapsedMs: proposedElapsedMs,
+      timing: {
+        tick: proposedTick,
+        tickCount: proposedTickCount,
+        elapsedMs: proposedElapsedMs,
+      },
     };
   }
 
   const previous = snapshotStateBySim.get(sim);
   if (previous === undefined) {
-    const initialState = {
-      tick: proposedTick,
-      tickCount: proposedTickCount,
-      elapsedMs: proposedElapsedMs,
+    const initialState: SnapshotPublicationState = {
+      timing: {
+        tick: proposedTick,
+        tickCount: proposedTickCount,
+        elapsedMs: proposedElapsedMs,
+      },
+      snapshotProbe: getProbeFromSim(sim),
     };
     snapshotStateBySim.set(sim, initialState);
     return initialState;
   }
 
-  const committedTiming: SnapshotTiming = {
-    tick: proposedTick < previous.tick ? previous.tick : proposedTick,
-    tickCount: proposedTickCount < previous.tickCount ? previous.tickCount : proposedTickCount,
-    elapsedMs: proposedElapsedMs < previous.elapsedMs ? previous.elapsedMs : proposedElapsedMs,
+  const hasCommittedBoundary = proposedTick > previous.timing.tick || proposedTickCount > previous.timing.tickCount;
+  const nextTiming: SimCommittedTiming = {
+    tick: proposedTick > previous.timing.tick ? proposedTick : previous.timing.tick,
+    tickCount:
+      proposedTickCount > previous.timing.tickCount ? proposedTickCount : previous.timing.tickCount,
+    elapsedMs: hasCommittedBoundary
+      ? (proposedElapsedMs < previous.timing.elapsedMs ? previous.timing.elapsedMs : proposedElapsedMs)
+      : previous.timing.elapsedMs,
   };
+  previous.timing = nextTiming;
+  previous.snapshotProbe = getProbeFromSim(sim);
 
-  snapshotStateBySim.set(sim, committedTiming);
-  return committedTiming;
+  return previous;
 };
 
 const isObject = (value: unknown): value is SnapshotState => {
@@ -290,6 +316,52 @@ const createPlayerSnapshot = (sim: SnapshotSim): SnapshotPlayer | undefined => {
     fuel: fuel < 0 ? 0 : fuel,
     maxFuel: maxFuel < 1 ? 1 : maxFuel,
     ...(rot === undefined ? {} : { rot }),
+  };
+};
+
+const asStartupProbeState = (value: unknown): SnapshotProbe | undefined => {
+  if (!isObject(value)) {
+    return undefined;
+  }
+
+  const candidate = value as {
+    phase?: unknown;
+    error?: unknown;
+  };
+
+  if (
+    candidate.phase !== "init" &&
+    candidate.phase !== "sim-ready" &&
+    candidate.phase !== "renderer-ready" &&
+    candidate.phase !== "input-ready" &&
+    candidate.phase !== "running" &&
+    candidate.phase !== "error"
+  ) {
+    return undefined;
+  }
+
+  if (candidate.error !== undefined && typeof candidate.error !== "string") {
+    return undefined;
+  }
+
+  return {
+    phase: candidate.phase,
+    ...(candidate.error === undefined ? {} : { error: candidate.error }),
+  };
+};
+
+const getProbeFromSim = (sim: SnapshotSim): SnapshotProbe => {
+  if (typeof sim.getStartupProbe === "function") {
+    const probe = sim.getStartupProbe();
+    const normalized = asStartupProbeState(probe);
+    if (normalized !== undefined) {
+      return normalized;
+    }
+  }
+
+  const tick = clampBoundaryCounter(sim.tick);
+  return {
+    phase: tick > 0 ? "running" : "init",
   };
 };
 
@@ -500,6 +572,15 @@ const createEntitySnapshot = (entity: EntityBase): SnapshotEntity => {
   return baseSnapshot;
 };
 
+const compareSnapshotEntityIds = (left: EntityBase, right: EntityBase): number => {
+  const leftValue = Number(left.id);
+  const rightValue = Number(right.id);
+  if (Number.isFinite(leftValue) && Number.isFinite(rightValue)) {
+    return leftValue - rightValue;
+  }
+  return left.id.localeCompare(right.id);
+};
+
 export const createSnapshot = (sim: SnapshotSim): Snapshot => {
   const map = getSnapshotMap(sim);
   const width = clampCounter(sim.width ?? map?.width);
@@ -512,6 +593,20 @@ export const createSnapshot = (sim: SnapshotSim): Snapshot => {
     ? sim.tileSize
     : DEFAULT_TILE_SIZE;
   const timing = asCommittedTiming(sim, tick, tickCount, elapsedMs);
+  if (
+    timing.snapshot !== undefined &&
+    timing.timing.tick === timing.snapshot.time.tick &&
+    timing.timing.tickCount === timing.snapshot.time.tickCount &&
+    timing.snapshotWidth === width &&
+    timing.snapshotHeight === height &&
+    timing.snapshotTileSize === tileSize &&
+    timing.snapshotMap === map &&
+    timing.snapshotProbe !== undefined &&
+    timing.snapshotProbe.phase === timing.snapshot.probe.phase &&
+    timing.snapshotProbe.error === timing.snapshot.probe.error
+  ) {
+    return timing.snapshot;
+  }
 
   const ore = map === undefined ? [] : getCachedOreList(map);
   const entities = sim.getAllEntities?.() ?? [];
@@ -524,15 +619,24 @@ export const createSnapshot = (sim: SnapshotSim): Snapshot => {
       tileSize,
     },
     time: {
-      tick: timing.tick,
-      elapsedMs: timing.elapsedMs,
-      tickCount: timing.tickCount,
+      tick: timing.timing.tick,
+      elapsedMs: timing.timing.elapsedMs,
+      tickCount: timing.timing.tickCount,
     },
+    probe: getProbeFromSim(sim),
     ore,
-    entities: entities.map(createEntitySnapshot),
+    entities: entities.slice().sort(compareSnapshotEntityIds).map(createEntitySnapshot),
     ...(player === undefined ? {} : { player }),
   };
 
   deepFreezeSnapshot(snapshot);
+  if (isObject(sim)) {
+    timing.snapshot = snapshot;
+    timing.snapshotWidth = width;
+    timing.snapshotHeight = height;
+    timing.snapshotTileSize = tileSize;
+    timing.snapshotMap = map;
+    timing.snapshotProbe = snapshot.probe;
+  }
   return snapshot;
 };
