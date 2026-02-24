@@ -2,81 +2,189 @@
   "features": [
     {
       "id": "tile-map-rendering",
-      "title": "Tile Map Rendering",
-      "description": "Render a 32px grid world with visible tiles and entity sprites using PixiJS 8, driven by simulation state rather than ad-hoc UI state.",
+      "title": "Tile map + resource generation",
+      "description": "Render a deterministic world with generated iron-ore and coal-ore resource patches, including a no-resource spawn exclusion ring.",
       "status": "complete",
       "acceptanceHints": [
-        "Grid aligns to 32px tiles with deterministic tile-to-pixel mapping.",
-        "Entities render at correct tile coordinates and facing direction.",
-        "Renderer consumes state snapshots from the fixed-step simulation loop."
+        "Resources are generated deterministically from a stable seed.",
+        "Spawn area avoids resource placement in the player's spawn clearance ring.",
+        "Map sampling functions reject invalid tile coordinates."
       ]
     },
     {
       "id": "mining",
-      "title": "Mining Loop",
-      "description": "Allow Miner entities to extract iron-ore from Resource nodes and emit ore toward their facing direction at deterministic tick intervals.",
+      "title": "Miner extraction loop",
+      "description": "Directional miner placement with tick-based extraction and ore emission cadence.",
       "status": "complete",
       "acceptanceHints": [
-        "Miner only extracts from valid iron-ore resource placement rules.",
-        "Output item type is always iron-ore.",
-        "Extraction cadence is measured in simulation ticks, independent of render FPS."
+        "Miner placement requires valid ore tile under the building.",
+        "Miner only emits items in its facing direction.",
+        "Output cadence remains fixed in ticks independent of frame timing."
       ]
     },
     {
       "id": "belts",
-      "title": "Belt Transport",
-      "description": "Move items across directional belts (N/E/S/W) one step at a time under fixed-tick simulation rules.",
+      "title": "Belt transport",
+      "description": "Directional transport across belt segments with deterministic fixed-step progression.",
       "status": "complete",
       "acceptanceHints": [
-        "Belts accept items from valid upstream outputs when capacity allows.",
-        "Items progress in belt direction and hand off to valid downstream receivers.",
-        "Paused simulation halts belt movement without losing buffered items."
+        "Belts accept upstream input and refuse blocked transfers.",
+        "No same-tick ingress and egress at a belt tile boundary.",
+        "Paused simulation does not advance item movement."
       ]
     },
     {
       "id": "inserters",
-      "title": "Inserter Transfer",
-      "description": "Support directional inserters that pick up items from one side and drop them on the opposite side for both ore and plate items.",
+      "title": "Inserter transfer",
+      "description": "Directional pickup/drop transfer with ore and plate item support.",
       "status": "complete",
       "acceptanceHints": [
-        "Inserter pickup/drop sides obey current orientation.",
-        "Inserter can transfer iron-ore and iron-plate.",
-        "Transfers occur on deterministic tick-based timing."
+        "Pickup and drop sides follow current orientation.",
+        "Transfers execute on fixed insertion cadence.",
+        "Inserter movement honors available capacity and destination availability."
       ]
     },
     {
-      "id": "furnace-smelting",
-      "title": "Furnace Smelting",
-      "description": "Implement furnace processing that converts iron-ore input into iron-plate output after a fixed tick-based processing duration.",
+      "id": "splitters",
+      "title": "Splitters / mergers / conveyor balancing",
+      "description": "Routing and balancing behavior for 1->2 belt branch flows with deterministic arbitration.",
       "status": "complete",
       "acceptanceHints": [
-        "Only iron-ore is accepted as smelt input in this slice.",
-        "Output item type is iron-plate.",
-        "No power or fuel prerequisite is required."
+        "Splitter routes one item forward and one item laterally per cadence window.",
+        "Branch arbitration is deterministic when both outputs are available.",
+        "Stack balancing does not drop or duplicate items."
       ]
     },
     {
-      "id": "ui-placement",
-      "title": "UI Placement Controls",
-      "description": "Provide keyboard and mouse controls for entity selection, rotation, placement, removal, and pause toggling.",
+      "id": "furnaces",
+      "title": "Furnace processing",
+      "description": "Convert iron-ore into iron-plate and consume/produce fuel as configured by power rules.",
       "status": "complete",
       "acceptanceHints": [
-        "Keys 1-4 select Miner, Belt, Inserter, and Furnace respectively.",
-        "R rotates placement orientation through N/E/S/W.",
-        "Left-click places and right-click removes entities on valid target tiles.",
-        "Space pauses and resumes simulation stepping."
+        "Input ore is consumed only with valid fuel availability.",
+        "Output appears as iron-plate after processing duration.",
+        "Power usage and fuel accounting are reflected in diagnostics."
       ]
     },
     {
-      "id": "run-instructions",
-      "title": "Run Instructions",
-      "description": "Document local development and validation commands for Node 20+ and Vite 6 so the vertical slice can be started and checked quickly.",
+      "id": "chests",
+      "title": "Chest entity + inventory I/O",
+      "description": "Local inventory node for adjacent pickup/deposit and explicit player transfer.",
       "status": "complete",
       "acceptanceHints": [
-        "Instructions clearly state Node.js 20+ requirement.",
-        "Instructions clearly state Vite 6 expectations for local run/build workflows.",
-        "Includes script-based commands for install, dev run, deterministic regression checks, and strict verification.",
-        "Mentions fixed-step simulation expectations for manual validation."
+        "Chest inventories can be opened and item moved.",
+        "Q/E flow uses adjacency checks and respects capacity.",
+        "Placement, pickup, and deposit operations are stable in world updates."
+      ]
+    },
+    {
+      "id": "assembly-content",
+      "title": "Assembler and recipes",
+      "description": "Broader crafting content including gears and recipe-chain behavior.",
+      "status": "complete",
+      "acceptanceHints": [
+        "Assembler entities can be placed and removed.",
+        "Gear recipe consumes input plates and emits gear items.",
+        "Recipe-chain progression remains deterministic."
+      ]
+    },
+    {
+      "id": "player-controls",
+      "title": "Player controls and simulation loop",
+      "description": "WASD movement, pause/resume, ghost placement/rotation, and fixed-step tick stepping.",
+      "status": "complete",
+      "acceptanceHints": [
+        "Pause freezes tickCount, elapsed, and world state.",
+        "Step tick advances exactly one simulation tick while paused.",
+        "Rotation and placement behavior matches selected UI state."
+      ]
+    },
+    {
+      "id": "refuel",
+      "title": "Refuel action",
+      "description": "Furnace-adjacent refueling using furnace output by player interaction.",
+      "status": "complete",
+      "acceptanceHints": [
+        "F key near furnace output consumes one smelted unit.",
+        "Fuel bar updates and affects furnace readiness."
+      ]
+    },
+    {
+      "id": "power-systems",
+      "title": "Power systems and energy budgets",
+      "description": "Global power storage, connected/disconnected behavior, per-tick demand/consumption accounting, and diagnostics.",
+      "status": "complete",
+      "acceptanceHints": [
+        "Producers and consumers are modeled in power graph updates.",
+        "Power diagnostics reflect active/inactive power state per entity.",
+        "Energy accounting remains stable under pause/resume."
+      ]
+    },
+    {
+      "id": "hud-rendering",
+      "title": "HUD + rendering pipeline",
+      "description": "Canvas rendering with interaction hints, player HUD, sprite placement, and metrics panel.",
+      "status": "complete",
+      "acceptanceHints": [
+        "Renderer reflects entity states and placement previews.",
+        "HUD includes power/fuel/metrics and key control labels.",
+        "Top-level UI controls and interactions remain responsive."
+      ]
+    },
+    {
+      "id": "coal-fuel",
+      "title": "Coal extraction and coal fuel loop",
+      "description": "Add coal resources, miners, and furnace fuel pipeline from coal throughput.",
+      "status": "complete",
+      "acceptanceHints": [
+        "Coal patches are generated deterministically.",
+        "Coal can be mined and delivered into fuel consumers.",
+        "Fuel requirement blocks furnace processing when empty."
+      ]
+    },
+    {
+      "id": "persistence",
+      "title": "Save / Load persistence",
+      "description": "Persist full simulation state, player stats, and inventories to localStorage and restore deterministically.",
+      "status": "complete",
+      "acceptanceHints": [
+        "Load restores entity sets, tick state, and inventory.",
+        "Save handles malformed/missing payloads safely.",
+        "Save/load preserves UI selection and simulation timing state."
+      ]
+    },
+    {
+      "id": "feature-dashboard",
+      "title": "Feature status dashboard accuracy",
+      "description": "Keep docs and trackers synchronized with actual implementation status.",
+      "status": "complete",
+      "acceptanceHints": [
+        "Feature tracker reflects implemented/in-progress/pending clearly.",
+        "Documentation avoids stale 'pending' claims for shipped systems.",
+        "Known limitations match actual remaining work."
+      ]
+    },
+    {
+      "id": "agent-workflow-integration",
+      "title": "Agent workflow tooling integration",
+      "description": "Provide one-command smoke verification for agent-driven gameplay changes.",
+      "status": "complete",
+      "acceptanceHints": [
+        "A single script runs typecheck, build, movement regression, and e2e smoke.",
+        "Strict mode exists and fails when required tooling is missing.",
+        "Documentation points users to the workflow command."
+      ]
+    },
+    {
+      "id": "shortcut-overlay",
+      "title": "Keyboard shortcut accessibility overlay",
+      "description": "Expose a dedicated, touch-friendly keyboard shortcut reference panel with keyboard and click access.",
+      "status": "complete",
+      "acceptanceHints": [
+        "Shortcut overlay opens with the dedicated Shortcuts button and the K key.",
+        "Quick actions are available in-overlay for pause, stepping, tool clear, camera focus, auto-follow, and renderer toggle.",
+        "The overlay can be dismissed via close control, outside click, or K key.",
+        "Smoke coverage verifies overlay behavior and quick-action outcomes."
       ]
     }
   ]

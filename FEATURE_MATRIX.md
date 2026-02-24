@@ -3,15 +3,15 @@
 Last updated: 2026-02-22
 
 ## Current Scope Summary
-- Total listed feature areas: 14
-- Implemented: 9
-- In progress: 2
-- Not started: 4
+ - Total listed feature areas: 17
+ - Implemented: 17
+ - In progress: 0
+ - Not started: 0
 
 ## Implemented
 
 1. **Tile map + resource generation**
-   - Iron-ore patch generation with deterministic seeds.
+   - Resource patch generation (iron-ore and coal-ore) with deterministic seeds.
    - 10x10 no-resource spawn ring.
 
 2. **Miner extraction loop**
@@ -38,36 +38,41 @@ Last updated: 2026-02-22
 9. **HUD + rendering pipeline**
    - Canvas renderer with entity sprites, player fuel bar, in-world interaction hints, and metrics panel.
 
+10. **Coal + coal fuel loop**
+    - Coal patch generation, miner extraction to coal, and furnace fuel requirements.
+
+11. **Feature status dashboard accuracy pass**
+   - Aligning docs, runtime behavior, feature tracker, and roadmap visibility.
+
+12. **Persistence + save/load state**
+   - Persist complete simulation state, player stats, and inventory to localStorage and restore deterministically.
+
+13. **Splitters / mergers / stack-balancing conveyors**
+    - Splitter routing and deterministic branch arbitration for transport branches.
+
+14. **Broader crafting/assembly content**
+   - Gear recipes, assembler machine placement, and recipe-chain extension from plate -> gear.
+
+15. **Power systems and energy budgets**
+   - Global power storage, per-tick demand/consumption accounting, and entity-level power costs.
+   - Producer network graph, connected/disconnected consumer behavior, and power diagnostics.
+   - Furnace start/run power hooks with power generation from consumed coal.
+
+16. **Agent workflow tooling integration**
+   - Added local agent smoke workflow that runs typecheck/build, movement regression, and optional/strict e2e checks.
+   - Introduced `agent:workflow`, `agent:workflow:strict`, and `agent:smoke:strict` npm scripts.
+
+17. **Keyboard shortcut accessibility overlay**
+  - Added compact touch/keyboard hint overlay with explicit toggle (`K`) and control button.
+  - Added quick-action controls (pause, single/ten-step tick advance, clear tool, auto-follow, camera focus, SVG toggle) directly in the overlay.
+  - Added overlay backdrop interaction to close on outside click plus regression coverage in the Playwright smoke suite for actions.
+
 ## In Progress
 
-1. **Refuel + coal transition**
-   - Keep `F` refuel loop stable while adding coal.
-   - Refuel currently consumes **iron-plate** from furnace output.
-   - Coal generation and burner-fuel semantics are not implemented yet.
-
-2. **Feature status dashboard accuracy pass**
-   - Consolidating one source-of-truth feature tracker with explicit counts and ownership.
-   - Goal: align docs, runtime behavior, and roadmap visibility.
+No in-progress features.
 
 ## Not Started (Planned)
-
-1. **Coal and coal fuel loop**
-   - Coal patch generation, burner-type fuel semantics, and player/furnace burner integrations.
-
-2. **Splitters / mergers / stack-balancing conveyors**
-   - Branching and routing logic for non-linear transport topologies.
-
-3. **Power systems and energy budgets**
-   - Power generation + consumption model before expansion.
-
-4. **Persistence + save/load state**
-   - Rehydrate run state and continue mid-build.
-
-5. **Broader crafting/assembly content**
-   - Extended recipes and machine chain beyond ore->plate baseline.
-
-6. **Agent workflow tooling integration**
-   - Keep gameplay parity with automated agents running local smoke tests for gameplay changes.
+None.
 
 ## Status Interpretation (for coordination)
 - "Implemented" means the behavior is present and reasonably stable in current UI and simulation code.
