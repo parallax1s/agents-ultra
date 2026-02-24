@@ -187,10 +187,24 @@ npm run agent:workflow -- --strict
 - Implemented: miner, belt, splitter, inserter, furnace, chest, fixed-step simulation, deterministic transport loops, player movement/refuel, HUD metrics, SVG rendering, chest inventory transfer (`Q`/`E`), and save/load state persistence.
 - Agent workflow tooling integration is implemented via the `agent:workflow*` scripts.
 
+## End-goal spec (for agent swarm launches)
+
+- Before running another Agent Swarm, use `ENDGOAL_SPEC.md` as the authoritative plan.
+- `ENDGOAL_SPEC.md` contains Factorio-inspired feature mapping, architecture flow charts, and phase sequencing.
+- The immediate launch checklist is the SPARK preflight in that document:
+- Scope, Plan, Agenda, Reliability, and Kickoff evidence.
+
 ## Roadmap and next features
 
 - Current feature backlog is tracked in `FEATURE_ROADMAP.md`.
 - Use this as the working checklist for the next iterations and mark items as in progress or complete as we ship them.
+
+## Implementation planning source files
+
+- `ENDGOAL_SPEC.md`: high-level target architecture and growth path.
+- `FACTORIO_GAP_FEATURES.md`: concise Factorio-to-Agents Ultra gap matrix.
+- `FEATURE_MATRIX.md`: current implementation matrix and quality signals.
+- `FEATURES.json`: machine-readable status list used for automation and tracking.
 
 ## Known Limitations
 - Power networking behavior and disconnected consumer diagnostics are implemented.
