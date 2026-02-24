@@ -193,6 +193,8 @@ npm run agent:workflow -- --strict
 - `ENDGOAL_SPEC.md` contains Factorio-inspired feature mapping, architecture flow charts, and phase sequencing.
 - The immediate launch checklist is the SPARK preflight in that document:
 - Scope, Plan, Agenda, Reliability, and Kickoff evidence.
+- Launch operations (agent assignment, card handoff, reliability gates) are defined in
+  `AGENT_SWARM_LAUNCH_PLAN.md`.
 
 ## Roadmap and next features
 
