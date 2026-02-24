@@ -5,12 +5,30 @@ import {
   getDefinition,
 } from "../core/registry";
 import { sortByGridEntityOrder } from "../core/map";
-import { DIRECTION_VECTORS, OPPOSITE_DIRECTION } from "../core/types";
+import {
+  DIRECTION_VECTORS,
+  FURNACE_INPUT_ITEM,
+  OPPOSITE_DIRECTION,
+  rotateDirection,
+} from "../core/types";
 import type { Direction, EntityBase, GridCoord, ItemKind } from "../core/types";
-import { Furnace, FURNACE_TYPE } from "./furnace";
+import { Furnace, FURNACE_TYPE, type FurnacePowerHooks } from "./furnace";
+import { Assembler, ASSEMBLER_TYPE, type AssemblerPowerHooks } from "./assembler";
 
 const getCanonicalCadenceTicks = (kind: CanonicalTickKind): number =>
   CANONICAL_TICK_PHASE_CADENCE_TICKS[kind];
+
+const POWER_COSTS = {
+  miner: 2,
+  beltTransfer: 1,
+  inserterMove: 1,
+  inserterPickup: 1,
+  furnaceStart: 2,
+  furnaceTick: 1,
+  furnaceFuelToPower: 182,
+  assemblerStart: 2,
+  assemblerTick: 1,
+};
 
 type CanonicalTickKind = "miner" | "belt" | "inserter" | "furnace";
 
@@ -21,11 +39,21 @@ type SimLike = {
   readonly getLiveAllEntities?: () => EntityBase[];
   readonly tick?: number;
   readonly tickCount?: number;
+  readonly consumePower?: (amount: number, kind?: string, consumerId?: string) => boolean;
+  readonly generatePower?: (amount: number, kind?: string) => number;
+  readonly getPowerState?: () => unknown;
+  readonly isPowerConsumerConnected?: (consumerId: string) => boolean;
   readonly map?: {
     readonly isOre?: (x: number, y: number) => boolean;
+    readonly isTree?: (x: number, y: number) => boolean;
+    readonly consumeResource?: (x: number, y: number) => boolean;
+    readonly getTile?: (x: number, y: number) => unknown;
   };
   readonly getMap?: () => {
     readonly isOre?: (x: number, y: number) => boolean;
+    readonly isTree?: (x: number, y: number) => boolean;
+    readonly consumeResource?: (x: number, y: number) => boolean;
+    readonly getTile?: (x: number, y: number) => unknown;
   };
 };
 
@@ -66,6 +94,31 @@ const getTickState = (sim: SimLike): TickPhaseState => {
   return nextState;
 };
 
+const tryConsumePower = (
+  sim: SimLike,
+  amount: number,
+  kind = "unknown",
+  consumer: EntityBase | null = null,
+): boolean => {
+  if (typeof sim.consumePower !== "function") {
+    return true;
+  }
+
+  if (consumer !== null) {
+    return sim.consumePower(amount, kind, consumer.id);
+  }
+
+  return sim.consumePower(amount, kind);
+};
+
+const tryGeneratePower = (sim: SimLike, amount: number, kind?: string): number => {
+  if (typeof sim.generatePower !== "function") {
+    return 0;
+  }
+
+  return sim.generatePower(amount, kind);
+};
+
 const getEntitiesForTick = (sim: SimLike): EntityBase[] => {
   const getAll =
     typeof sim.getLiveAllEntities === "function" ? sim.getLiveAllEntities : sim.getAllEntities;
@@ -90,6 +143,16 @@ const canonicalEntitiesByKind = (sim: SimLike): Record<CanonicalTickKind, Entity
   };
 
   for (const entity of getEntitiesForTick(sim)) {
+    if (entity.kind === "splitter") {
+      grouped.belt.push(entity);
+      continue;
+    }
+
+    if (entity.kind === ASSEMBLER_TYPE) {
+      grouped.furnace.push(entity);
+      continue;
+    }
+
     if (!isCanonicalTickKind(entity.kind)) {
       continue;
     }
@@ -107,6 +170,7 @@ type MinerState = Record<string, unknown> & {
   tickPhase: number;
   hasOutput: boolean;
   output: ItemKind | null;
+  justMined: boolean;
   light: "on";
 };
 
@@ -115,6 +179,11 @@ type BeltState = Record<string, unknown> & {
   item: ItemKind | null;
   items: [ItemKind | null];
   buffer: ItemKind | null;
+  accept: ItemKind | null;
+};
+
+type SplitterState = BeltState & {
+  nextOutputIndex: 0 | 1;
 };
 
 type InserterState = Record<string, unknown> & {
@@ -160,7 +229,13 @@ const isRecord = (value: unknown): value is Record<string, unknown> => {
 };
 
 const isItemKind = (value: unknown): value is ItemKind => {
-  return value === "iron-ore" || value === "iron-plate";
+  return (
+    value === "iron-ore" ||
+    value === "iron-plate" ||
+    value === "coal" ||
+    value === "iron-gear" ||
+    value === "wood"
+  );
 };
 
 const CHEST_DEFAULT_CAPACITY = 24;
@@ -230,6 +305,7 @@ const ensureMinerState = (entity: EntityBase): MinerState => {
       tickPhase: 0,
       hasOutput: false,
       output: null,
+      justMined: false,
       light: "on",
     } as MinerState;
   }
@@ -238,9 +314,27 @@ const ensureMinerState = (entity: EntityBase): MinerState => {
   state.tickPhase = asNonNegativeInteger(state.tickPhase);
   state.hasOutput = state.hasOutput === true;
   state.output = isItemKind(state.output) ? state.output : null;
+  state.justMined = state.justMined === true;
   state.light = "on";
 
+  if (state.output === null) {
+    state.justMined = false;
+  }
+
   return state;
+};
+
+const tryMoveMinerOutput = (
+  entity: EntityBase,
+  sim: SimLike,
+  minedItem: ItemKind,
+): boolean => {
+  const minePos = findMinerOutputTarget(sim, entity, minedItem);
+  if (minePos === null) {
+    return false;
+  }
+
+  return transferToCell(sim, entity, minePos, minedItem);
 };
 
 const syncBeltItemViews = (state: BeltState): void => {
@@ -255,6 +349,7 @@ const ensureBeltState = (entity: EntityBase): BeltState => {
       item: null,
       items: [null],
       buffer: null,
+      accept: null,
     } as BeltState;
   }
 
@@ -267,8 +362,19 @@ const ensureBeltState = (entity: EntityBase): BeltState => {
 
   state.tickPhase = asNonNegativeInteger(state.tickPhase);
   state.item = compatibleItem;
+  state.accept = isItemKind(state.accept) ? state.accept : null;
   syncBeltItemViews(state);
 
+  return state;
+};
+
+const canBeltAcceptItem = (state: BeltState, item: ItemKind): boolean => {
+  return state.accept === null || state.accept === item;
+};
+
+const ensureSplitterState = (entity: EntityBase): SplitterState => {
+  const state = ensureBeltState(entity) as SplitterState;
+  state.nextOutputIndex = state.nextOutputIndex === 1 ? 1 : 0;
   return state;
 };
 
@@ -300,6 +406,9 @@ const createChestState = (capacity = CHEST_DEFAULT_CAPACITY): ChestState => {
     stored: {
       "iron-ore": 0,
       "iron-plate": 0,
+      "iron-gear": 0,
+      coal: 0,
+      wood: 0,
     },
     canAcceptItem(item: string): boolean {
       return isItemKind(item) && state.items.length < state.capacity;
@@ -367,7 +476,7 @@ const tryProvideViaMethod = (host: unknown): ItemKind | null => {
     return null;
   }
 
-  const ordered: readonly ItemKind[] = ["iron-plate", "iron-ore"];
+  const ordered: readonly ItemKind[] = ["iron-plate", "iron-gear", "coal", "wood", "iron-ore"];
   for (const item of ordered) {
     if (host.canProvideItem !== undefined && !host.canProvideItem(item)) {
       continue;
@@ -387,6 +496,10 @@ const isInsertDirectionValid = (source: EntityBase, target: EntityBase): boolean
   return incomingDir !== undefined && incomingDir === target.rot;
 };
 
+const isSplitterInputDirectionValid = (source: EntityBase, target: EntityBase): boolean => {
+  return isInsertDirectionValid(source, target);
+};
+
 const canAcceptDirectly = (
   source: EntityBase,
   target: EntityBase,
@@ -394,7 +507,12 @@ const canAcceptDirectly = (
 ): boolean => {
   if (target.kind === "belt") {
     const beltState = ensureBeltState(target);
-    return beltState.item === null;
+    return beltState.item === null && canBeltAcceptItem(beltState, item);
+  }
+
+  if (target.kind === "splitter") {
+    const splitterState = ensureSplitterState(target);
+    return splitterState.item === null && isSplitterInputDirectionValid(source, target);
   }
 
   if (target.kind === "inserter") {
@@ -405,18 +523,6 @@ const canAcceptDirectly = (
   if (canAcceptViaMethod(target.state, item) || canAcceptViaMethod(target, item)) {
     return true;
   }
-
-  if (target.kind !== "furnace" || !isRecord(target.state)) {
-    return false;
-  }
-
-  if (item !== "iron-ore") {
-    return false;
-  }
-
-  const input = target.state.input;
-  const inputOccupied = target.state.inputOccupied;
-  return (input === null || input === undefined) && inputOccupied !== true;
 };
 
 const resolveDirectTransportTarget = (
@@ -446,11 +552,22 @@ const tryAcceptItem = (
 ): boolean => {
   if (target.kind === "belt") {
     const beltState = ensureBeltState(target);
-    if (beltState.item !== null) {
+    if (beltState.item !== null || !canBeltAcceptItem(beltState, item)) {
       return false;
     }
     beltState.item = item;
     syncBeltItemViews(beltState);
+    return true;
+  }
+
+  if (target.kind === "splitter") {
+    const splitterState = ensureSplitterState(target);
+    if (splitterState.item !== null) {
+      return false;
+    }
+
+    splitterState.item = item;
+    syncBeltItemViews(splitterState);
     return true;
   }
 
@@ -472,25 +589,6 @@ const tryAcceptItem = (
   if (tryAcceptViaMethod(target.state, item) || tryAcceptViaMethod(target, item)) {
     return true;
   }
-
-  if (target.kind !== "furnace" || !isRecord(target.state)) {
-    return false;
-  }
-
-  if (item !== "iron-ore") {
-    return false;
-  }
-
-  const input = target.state.input;
-  const inputOccupied = target.state.inputOccupied;
-  const canAccept = (input === null || input === undefined) && inputOccupied !== true;
-  if (!canAccept) {
-    return false;
-  }
-
-  target.state.input = item;
-  target.state.inputOccupied = true;
-  return true;
 };
 
 const tryTakeItem = (source: EntityBase): ItemKind | null => {
@@ -502,6 +600,17 @@ const tryTakeItem = (source: EntityBase): ItemKind | null => {
     const item = beltState.item;
     beltState.item = null;
     syncBeltItemViews(beltState);
+    return item;
+  }
+
+  if (source.kind === "splitter") {
+    const splitterState = ensureSplitterState(source);
+    if (splitterState.item === null) {
+      return null;
+    }
+    const item = splitterState.item;
+    splitterState.item = null;
+    syncBeltItemViews(splitterState);
     return item;
   }
 
@@ -544,6 +653,25 @@ const transferToCell = (
   return false;
 };
 
+const canTransferToCell = (
+  sim: SimLike,
+  from: EntityBase,
+  targetPos: GridCoord,
+  item: ItemKind,
+): boolean => {
+  const candidates = getEntitiesAt(sim, targetPos);
+  for (const candidate of candidates) {
+    if (candidate.id === from.id) {
+      continue;
+    }
+    if (canAcceptDirectly(from, candidate, item)) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
 const canTransferToBeltTarget = (
   sim: SimLike,
   source: EntityBase,
@@ -562,10 +690,25 @@ const canTransferToBeltTarget = (
       return false;
     }
 
+    if (!canBeltAcceptItem(targetState, item)) {
+      return false;
+    }
+
     return true;
   }
 
   return canAcceptDirectly(source, target, item);
+};
+
+const getSplitterOutputTargets = (source: EntityBase): Array<{ direction: Direction; pos: GridCoord }> => {
+  if (source.kind !== "splitter") {
+    return [];
+  }
+
+  return [
+    { direction: rotateDirection(source.rot, -1), pos: move(source.pos, rotateDirection(source.rot, -1)) },
+    { direction: rotateDirection(source.rot, 1), pos: move(source.pos, rotateDirection(source.rot, 1)) },
+  ];
 };
 
 const chooseBeltTransferTarget = (
@@ -574,7 +717,7 @@ const chooseBeltTransferTarget = (
   reservedTargetIds: Set<string>,
   resolutions: Map<string, BeltTransferResolution>,
 ): EntityBase | null => {
-  const sourceState = ensureBeltState(source);
+  const sourceState = source.kind === "splitter" ? ensureSplitterState(source) : ensureBeltState(source);
   if (sourceState.item === null || sourceState.tickPhase % getCanonicalCadenceTicks("belt") !== 0) {
     return null;
   }
@@ -587,7 +730,36 @@ const chooseBeltTransferTarget = (
     return existingResolution.state === "movable" ? existingResolution.target ?? null : null;
   }
 
-  const targetPos = move(source.pos, source.rot);
+  const candidateTargetPositions = source.kind === "splitter"
+    ? getSplitterOutputTargets(source)
+    : [{ direction: source.rot, pos: move(source.pos, source.rot) }];
+
+  if (source.kind === "splitter") {
+    const splitterState = sourceState as SplitterState;
+    for (let index = 0; index < candidateTargetPositions.length; index += 1) {
+      const candidate = candidateTargetPositions[(splitterState.nextOutputIndex + index) % candidateTargetPositions.length];
+      const candidateEntities = getEntitiesAt(sim, candidate.pos);
+      for (const target of candidateEntities) {
+        if (target.id === source.id) {
+          continue;
+        }
+
+        if (!canTransferToBeltTarget(sim, source, target, sourceState.item, reservedTargetIds, resolutions)) {
+          continue;
+        }
+
+        splitterState.nextOutputIndex = splitterState.nextOutputIndex === 0 ? 1 : 0;
+        reservedTargetIds.add(target.id);
+        resolutions.set(source.id, { state: "movable", target });
+        return target;
+      }
+    }
+
+    resolutions.set(source.id, { state: "blocked", target: null });
+    return null;
+  }
+
+  const targetPos = candidateTargetPositions[0].pos;
   const candidates = getEntitiesAt(sim, targetPos);
   resolutions.set(source.id, { state: "resolving", target: null });
 
@@ -648,6 +820,10 @@ const commitBeltTransferPlans = (
   plans: ReadonlyArray<BeltTransferPlan>,
 ): void => {
   for (const plan of plans) {
+    if (!tryConsumePower(sim, POWER_COSTS.beltTransfer, "belt-transfer", plan.source)) {
+      continue;
+    }
+
     const sourceState = ensureBeltState(plan.source);
     if (sourceState.item !== plan.item) {
       continue;
@@ -668,23 +844,133 @@ const commitBeltTransferPlans = (
   }
 };
 
-const canMineTile = (sim: SimLike, pos: GridCoord): boolean => {
-  const fromGetter = typeof sim.getMap === "function" ? sim.getMap() : undefined;
-  const map = fromGetter ?? sim.map;
-  if (map === undefined || typeof map.isOre !== "function") {
+const resolveMinedItemFromMap = (
+  sim: SimLike,
+  pos: GridCoord,
+): ItemKind | null => {
+  const map = typeof sim.getMap === "function" ? sim.getMap() : sim.map;
+  if (map === undefined) {
+    return FURNACE_INPUT_ITEM;
+  }
+
+  if (typeof map.getTile === "function") {
+    const tile = map.getTile(pos.x, pos.y);
+    if (tile === "coal-ore") {
+      return "coal";
+    }
+
+    if (tile === "iron-ore") {
+      return FURNACE_INPUT_ITEM;
+    }
+
+    if (tile === "tree") {
+      return "wood";
+    }
+  }
+
+  if (typeof map.isCoal === "function" && map.isCoal(pos.x, pos.y)) {
+    return "coal";
+  }
+
+  if (typeof map.isOre === "function" && map.isOre(pos.x, pos.y)) {
+    return FURNACE_INPUT_ITEM;
+  }
+
+  if (typeof map.isTree === "function" && map.isTree(pos.x, pos.y)) {
+    return "wood";
+  }
+
+  if (typeof map.isOre !== "function" && typeof map.isCoal !== "function") {
+    return FURNACE_INPUT_ITEM;
+  }
+
+  return null;
+};
+
+const consumeMinedResourceFromMap = (
+  sim: SimLike,
+  pos: GridCoord,
+): boolean => {
+  const map = typeof sim.getMap === "function" ? sim.getMap() : sim.map;
+  if (map === undefined || map === null) {
     return true;
   }
 
-  return map.isOre(pos.x, pos.y);
+  const consumeResource = map.consumeResource;
+  if (typeof consumeResource !== "function") {
+    return true;
+  }
+
+  return consumeResource(pos.x, pos.y);
+};
+
+const canMineTile = (sim: SimLike, pos: GridCoord): boolean => {
+  return resolveMinedItemFromMap(sim, pos) !== null;
+};
+
+const MINER_FALLBACK_OUTPUT_DIRECTIONS: ReadonlyArray<Direction> = [
+  "N",
+  "E",
+  "S",
+  "W",
+];
+
+const getMinedItemFromTile = (sim: SimLike, pos: GridCoord): ItemKind => {
+  const resolved = resolveMinedItemFromMap(sim, pos);
+  if (resolved === null) {
+    return FURNACE_INPUT_ITEM;
+  }
+
+  return resolved;
+};
+
+const findMinerOutputTarget = (
+  sim: SimLike,
+  entity: EntityBase,
+  minedItem: ItemKind,
+): GridCoord | null => {
+  const preferred = move(entity.pos, entity.rot);
+  if (canTransferToCell(sim, entity, preferred, minedItem)) {
+    return preferred;
+  }
+
+  for (const direction of MINER_FALLBACK_OUTPUT_DIRECTIONS) {
+    if (direction === entity.rot) {
+      continue;
+    }
+
+    const candidate = move(entity.pos, direction);
+    if (canTransferToCell(sim, entity, candidate, minedItem)) {
+      return candidate;
+    }
+  }
+
+  return null;
 };
 
 const tickMinerEntity = (entity: EntityBase, _dtMs: number, sim: SimLike): void => {
   const state = ensureMinerState(entity);
   state.tickPhase += 1;
+  state.justMined = false;
+
+  if (state.output !== null && state.output !== undefined) {
+    if (!state.hasOutput) {
+      state.hasOutput = true;
+    }
+  }
+
+  if (state.output !== null) {
+    if (tryMoveMinerOutput(entity, sim, state.output)) {
+      state.output = null;
+      state.hasOutput = false;
+      state.justMined = true;
+    } else {
+      state.hasOutput = true;
+    }
+    return;
+  }
 
   if (state.tickPhase % getCanonicalCadenceTicks("miner") !== 0) {
-    state.hasOutput = false;
-    state.output = null;
     return;
   }
 
@@ -694,9 +980,33 @@ const tickMinerEntity = (entity: EntityBase, _dtMs: number, sim: SimLike): void 
     return;
   }
 
-  const emitted = transferToCell(sim, entity, move(entity.pos, entity.rot), "iron-ore");
-  state.hasOutput = emitted;
-  state.output = emitted ? "iron-ore" : null;
+  const minedItem = getMinedItemFromTile(sim, entity.pos);
+  if (!isItemKind(minedItem)) {
+    return;
+  }
+
+  const minePos = findMinerOutputTarget(sim, entity, minedItem);
+  if (minePos === null) {
+    return;
+  }
+
+  if (!tryConsumePower(sim, POWER_COSTS.miner, "miner", entity)) {
+    return;
+  }
+
+  if (!consumeMinedResourceFromMap(sim, entity.pos)) {
+    return;
+  }
+
+  if (transferToCell(sim, entity, minePos, minedItem)) {
+    state.output = null;
+    state.hasOutput = false;
+    state.justMined = true;
+    return;
+  }
+
+  state.output = minedItem;
+  state.hasOutput = true;
 };
 
 const collectInserterDropReservations = (
@@ -751,6 +1061,15 @@ const tickInserterEntity = (entity: EntityBase, _dtMs: number, sim: SimLike): vo
   const dropPos = move(entity.pos, entity.rot);
 
   if (state.holding !== null) {
+    if (!canTransferToCell(sim, entity, dropPos, state.holding)) {
+      state.state = 2;
+      return;
+    }
+
+    if (!tryConsumePower(sim, POWER_COSTS.inserterMove, "inserter-move", entity)) {
+      return;
+    }
+
     if (state.skipDropAtTick !== undefined) {
       const currentTick = compareSimTick(sim);
       if (state.skipDropAtTick === currentTick) {
@@ -777,10 +1096,17 @@ const tickInserterEntity = (entity: EntityBase, _dtMs: number, sim: SimLike): vo
     if (source.id === entity.id) {
       continue;
     }
+
     const item = tryTakeItem(source);
     if (item === null) {
       continue;
     }
+
+    if (!tryConsumePower(sim, POWER_COSTS.inserterPickup, "inserter-pickup", entity)) {
+      tryAcceptItem(source, item, entity);
+      return;
+    }
+
     state.holding = item;
     state.state = 1;
     return;
@@ -789,17 +1115,55 @@ const tickInserterEntity = (entity: EntityBase, _dtMs: number, sim: SimLike): vo
   state.state = 0;
 };
 
-const tickFurnaceEntity = (entity: EntityBase, dtMs: number): void => {
+const tickFurnaceEntity = (entity: EntityBase, dtMs: number, sim: SimLike): void => {
   if (!isRecord(entity.state)) {
     return;
   }
 
-  const furnaceState = entity.state as { update: unknown };
+  if (entity.kind === ASSEMBLER_TYPE) {
+    const assemblerState = entity.state as {
+      update: unknown;
+      setPowerHooks?: (hooks: AssemblerPowerHooks) => void;
+    };
+    if (typeof assemblerState.update !== "function") {
+      return;
+    }
+
+    const startPower = () =>
+      tryConsumePower(sim, POWER_COSTS.assemblerStart, "assembler-start", entity);
+    const tickPower = () =>
+      tryConsumePower(sim, POWER_COSTS.assemblerTick, "assembler-tick", entity);
+    if (typeof assemblerState.setPowerHooks === "function") {
+      assemblerState.setPowerHooks({ onStart: startPower, onTick: tickPower });
+    }
+
+    assemblerState.update(dtMs, { onStart: startPower, onTick: tickPower });
+    return;
+  }
+
+  const furnaceState = entity.state as {
+    update: unknown;
+    setPowerHooks?: (hooks: FurnacePowerHooks) => void;
+  };
   if (typeof furnaceState.update !== "function") {
     return;
   }
 
-  furnaceState.update(dtMs);
+    const startPower = () => tryConsumePower(sim, POWER_COSTS.furnaceStart, "furnace-start", entity);
+    const tickPower = () => tryConsumePower(sim, POWER_COSTS.furnaceTick, "furnace-tick", entity);
+  const onFuelBurn = () => {
+    tryGeneratePower(sim, POWER_COSTS.furnaceFuelToPower, "furnace-fuel-burn");
+  };
+
+  if (typeof furnaceState.setPowerHooks === "function") {
+    furnaceState.setPowerHooks({
+      onStart: startPower,
+      onTick: tickPower,
+      onFuelBurn,
+    });
+  }
+
+  furnaceState.update(dtMs, { onStart: startPower, onTick: tickPower, onFuelBurn });
 };
 
 const runCanonicalTick = (sim: SimLike, dtMs: number): void => {
@@ -829,7 +1193,7 @@ const runCanonicalTick = (sim: SimLike, dtMs: number): void => {
     }
 
     for (const entity of entities) {
-      tickFurnaceEntity(entity, dtMs);
+      tickFurnaceEntity(entity, dtMs, sim);
     }
   }
 };
@@ -883,6 +1247,26 @@ const registerBelt = (): void => {
       item: null,
       items: [null],
       buffer: null,
+      accept: null,
+    }),
+    tickPhase: "belt",
+    update: (_entity, dtMs, sim) => runCanonicalPhasesIfNeeded(dtMs, sim as SimLike),
+  });
+};
+
+const registerSplitter = (): void => {
+  if (getDefinition("splitter") !== undefined) {
+    return;
+  }
+
+  registerEntity("splitter", {
+    create: () => ({
+      tickPhase: 0,
+      item: null,
+      items: [null],
+      buffer: null,
+      accept: null,
+      nextOutputIndex: 0,
     }),
     tickPhase: "belt",
     update: (_entity, dtMs, sim) => runCanonicalPhasesIfNeeded(dtMs, sim as SimLike),
@@ -917,6 +1301,18 @@ const registerFurnace = (): void => {
   });
 };
 
+const registerAssembler = (): void => {
+  if (getDefinition(ASSEMBLER_TYPE) !== undefined) {
+    return;
+  }
+
+  registerEntity(ASSEMBLER_TYPE, {
+    create: () => new Assembler(),
+    tickPhase: "furnace",
+    update: (_entity, dtMs, sim) => runCanonicalPhasesIfNeeded(dtMs, sim as SimLike),
+  });
+};
+
 const registerChest = (): void => {
   if (getDefinition("chest") !== undefined) {
     return;
@@ -930,12 +1326,50 @@ const registerChest = (): void => {
   });
 };
 
+const SOLAR_PANEL_POWER_PER_TICK = 6;
+const ACCUMULATOR_POWER_CAPACITY = 120;
+
+const registerSolarPanel = (): void => {
+  if (getDefinition("solar-panel") !== undefined) {
+    return;
+  }
+
+  registerEntity("solar-panel", {
+    create: () => ({}),
+    update: (_entity, _dtMs, sim) => {
+      if (typeof sim.generatePower !== "function") {
+        return;
+      }
+      tryGeneratePower(sim, SOLAR_PANEL_POWER_PER_TICK, "solar-panel");
+    },
+  });
+};
+
+const registerAccumulator = (): void => {
+  if (getDefinition("accumulator") !== undefined) {
+    return;
+  }
+
+  registerEntity("accumulator", {
+    create: () => ({
+      storageCapacity: ACCUMULATOR_POWER_CAPACITY,
+    }),
+    update: () => {
+      // Accumulator behavior is modeled in the sim power network as additional capacity.
+    },
+  });
+};
+
 const registerDefaults = (): void => {
   registerMiner();
   registerBelt();
+  registerSplitter();
   registerInserter();
   registerFurnace();
+  registerAssembler();
   registerChest();
+  registerSolarPanel();
+  registerAccumulator();
 };
 
 registerDefaults();

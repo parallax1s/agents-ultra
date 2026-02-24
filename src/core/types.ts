@@ -3,7 +3,7 @@ export interface GridCoord {
   y: number;
 }
 
-export type TileType = "empty" | "iron-ore";
+export type TileType = "empty" | "iron-ore" | "coal-ore" | "tree";
 
 export type Direction = 'N' | 'E' | 'S' | 'W';
 
@@ -36,17 +36,24 @@ export const rotateDirection = (direction: Direction, steps = 1): Direction => {
   return DIRECTION_SEQUENCE[index] as Direction;
 };
 
-export type ItemKind = 'iron-ore' | 'iron-plate';
+export type ItemKind = 'iron-ore' | 'iron-plate' | 'coal' | 'iron-gear' | 'wood';
 
-export const SLICE_ITEM_KINDS = ['iron-ore', 'iron-plate'] as const satisfies readonly ItemKind[];
+export const SLICE_ITEM_KINDS = [
+  'iron-ore',
+  'iron-plate',
+  'coal',
+  'iron-gear',
+  'wood',
+] as const satisfies readonly ItemKind[];
 
 export const FURNACE_INPUT_ITEM = 'iron-ore' as const;
 export const FURNACE_OUTPUT_ITEM = 'iron-plate' as const;
+export const FURNACE_FUEL_ITEM = 'coal' as const;
 
 export const isItemKind = (value: string): value is ItemKind =>
   (SLICE_ITEM_KINDS as readonly string[]).includes(value);
 
-export type EntityKind = 'resource' | 'miner' | 'belt' | 'inserter' | 'furnace' | 'chest';
+export type EntityKind = 'resource' | 'miner' | 'belt' | 'splitter' | 'inserter' | 'furnace' | 'assembler' | 'chest' | 'solar-panel' | 'accumulator';
 
 export interface EntityBase {
   id: string;
@@ -76,4 +83,5 @@ export type SimCommittedTiming = Readonly<{
   tick: number;
   tickCount: number;
   elapsedMs: number;
+  revision?: number;
 }>;

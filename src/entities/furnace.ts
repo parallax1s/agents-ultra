@@ -1,15 +1,42 @@
-import { FURNACE_INPUT_ITEM, FURNACE_OUTPUT_ITEM, isItemKind, type ItemKind } from "../core/types";
+import {
+  FURNACE_INPUT_ITEM,
+  FURNACE_OUTPUT_ITEM,
+  isItemKind,
+  type ItemKind,
+} from "../core/types";
 
 export const FURNACE_TYPE = 'furnace';
 const FURNACE_SMELT_TICKS = 180;
+const FURNACE_FUEL_CAPACITY = 1;
+const FURNACE_FUEL_ITEMS = new Set<ItemKind>(["coal", "wood"] as const);
+
+export type FurnacePowerHooks = {
+  onStart?: () => boolean;
+  onTick?: () => boolean;
+  onFuelBurn?: (fuelAmount: number) => void;
+};
 
 export class Furnace {
   input: ItemKind | null = null;
+  private fuelAmount: number = 0;
   output: ItemKind | null = null;
   private crafting = false;
   private smeltProgressTicks = 0;
+  private powerHooks: FurnacePowerHooks | null = null;
+
+  setPowerHooks(hooks: FurnacePowerHooks | null): void {
+    this.powerHooks = hooks;
+  }
+
+  private canStartCrafting(): boolean {
+    return this.input === FURNACE_INPUT_ITEM && !this.crafting && this.output === null;
+  }
 
   canAcceptItem(item: string): boolean {
+    if (FURNACE_FUEL_ITEMS.has(item as ItemKind)) {
+      return this.fuelAmount < FURNACE_FUEL_CAPACITY;
+    }
+
     return (
       isItemKind(item) &&
       item === FURNACE_INPUT_ITEM &&
@@ -24,12 +51,40 @@ export class Furnace {
       return false;
     }
 
+    if (FURNACE_FUEL_ITEMS.has(item as ItemKind)) {
+      this.fuelAmount += 1;
+      return true;
+    }
+
     this.input = item as ItemKind;
     return true;
   }
 
+  canConsumeFuelForStart(): boolean {
+    return this.fuelAmount > 0;
+  }
+
+  private notifyFuelConsumed(): void {
+    this.fuelAmount = Math.max(0, this.fuelAmount - 1);
+    if (this.powerHooks?.onFuelBurn !== undefined) {
+      this.powerHooks.onFuelBurn(1);
+    }
+  }
+
   canProvideItem(item: string): boolean {
-    return isItemKind(item) && item === FURNACE_OUTPUT_ITEM && this.output === FURNACE_OUTPUT_ITEM;
+    if (item === FURNACE_OUTPUT_ITEM) {
+      return isItemKind(item) && this.output === FURNACE_OUTPUT_ITEM;
+    }
+
+    if (FURNACE_FUEL_ITEMS.has(item as ItemKind)) {
+      return (
+        this.fuelAmount > 0 &&
+        !this.crafting &&
+        this.output === null
+      );
+    }
+
+    return false;
   }
 
   provideItem(item: string): ItemKind | null {
@@ -37,23 +92,30 @@ export class Furnace {
       return null;
     }
 
+    if (FURNACE_FUEL_ITEMS.has(item as ItemKind)) {
+      this.fuelAmount = Math.max(0, this.fuelAmount - 1);
+      return item as ItemKind;
+    }
+
     const provided = this.output;
     this.output = null;
     return provided;
   }
 
-  private tryStartCrafting(): void {
-    if (this.crafting || this.input === null || this.output !== null) {
-      return;
+  startCrafting(): boolean {
+    if (!this.canStartCrafting() || !this.canConsumeFuelForStart()) {
+      return false;
     }
 
-    if (this.input !== FURNACE_INPUT_ITEM) {
-      return;
+    if (this.powerHooks?.onStart !== undefined && this.powerHooks.onStart() !== true) {
+      return false;
     }
 
+    this.notifyFuelConsumed();
     this.crafting = true;
     this.smeltProgressTicks = 0;
     this.input = null;
+    return true;
   }
 
   private hasReachedCompletionBoundary(): boolean {
@@ -65,13 +127,19 @@ export class Furnace {
     this.smeltProgressTicks = 0;
   }
 
-  update(_nowMs: number = 0): void {
+  update(_nowMs: number = 0, hooks: FurnacePowerHooks = {}): void {
+    this.powerHooks = hooks;
+
     if (!this.crafting) {
       if (this.output !== null) {
         return;
       }
 
-      this.tryStartCrafting();
+      this.startCrafting();
+      return;
+    }
+
+    if (this.powerHooks.onTick !== undefined && this.powerHooks.onTick() !== true) {
       return;
     }
 
@@ -87,6 +155,10 @@ export class Furnace {
 
     this.resetCraftingState();
     this.output = FURNACE_OUTPUT_ITEM;
+  }
+
+  get storage(): number {
+    return this.fuelAmount;
   }
 
   get inputOccupied(): boolean {

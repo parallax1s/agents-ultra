@@ -17,11 +17,46 @@ type CreateSimConfig = {
   height?: number;
   seed?: number | string;
   map?: GeneratedMap;
+  restore?: {
+    tick?: unknown;
+    tickCount?: unknown;
+    elapsedMs?: unknown;
+    paused?: unknown;
+    accumulatorMs?: unknown;
+    entities?: unknown;
+    power?: {
+      storage?: unknown;
+      capacity?: unknown;
+    };
+  };
+};
+
+type PowerBuckets = Record<string, number>;
+
+type SimPowerState = {
+  storage: number;
+  capacity: number;
+  demandThisTick: number;
+  consumedThisTick: number;
+  generatedThisTick: number;
+  networkProducers: number;
+  networkConsumers: number;
+  networkConnectedConsumers: number;
+  networkDisconnectedConsumers: number;
+  demandTotal: number;
+  consumedTotal: number;
+  generatedTotal: number;
+  shortagesTotal: number;
+  demandByKind: PowerBuckets;
+  consumedByKind: PowerBuckets;
+  generatedByKind: PowerBuckets;
+  shortagesThisTick: number;
 };
 
 type EntityInit = {
   pos: GridCoord;
   rot?: Direction;
+  state?: unknown;
 } & Record<string, unknown>;
 
 type EntityDescriptor = {
@@ -34,6 +69,44 @@ const DEFAULT_ROTATION: Direction = "N";
 const DEFAULT_WORLD_WIDTH = 64;
 const DEFAULT_WORLD_HEIGHT = 64;
 const DEFAULT_WORLD_SEED = 0;
+const DEFAULT_POWER_CAPACITY = 180;
+const DEFAULT_POWER_STORAGE = 120;
+const ACCUMULATOR_POWER_CAPACITY = 120;
+const POWER_NET_NEIGHBOR_OFFSETS: ReadonlyArray<GridCoord> = [
+  { x: 0, y: -1 },
+  { x: 1, y: 0 },
+  { x: 0, y: 1 },
+  { x: -1, y: 0 },
+];
+
+const createDefaultPowerNetworkState = (): {
+  producers: number;
+  consumers: number;
+  connectedConsumers: number;
+  disconnectedConsumers: number;
+} => ({
+  producers: 0,
+  consumers: 0,
+  connectedConsumers: 0,
+  disconnectedConsumers: 0,
+});
+
+const isPowerProducerKind = (kind: string): boolean => kind === "solar-panel";
+const isPowerConsumerKind = (kind: string): boolean =>
+  kind === "miner" ||
+  kind === "belt" ||
+  kind === "splitter" ||
+  kind === "inserter" ||
+  kind === "furnace" ||
+  kind === "assembler";
+
+type PowerNetworkAnalysis = {
+  producers: number;
+  consumers: number;
+  connectedConsumers: number;
+  disconnectedConsumers: number;
+  connectedConsumerIds: Set<string>;
+};
 
 const toCellKey = (pos: GridCoord): string => `${pos.x},${pos.y}`;
 
@@ -59,6 +132,10 @@ const isGridCoord = (value: unknown): value is GridCoord => {
   );
 };
 
+const isObject = (value: unknown): value is Record<string, unknown> => {
+  return value !== null && typeof value === "object";
+};
+
 const isDirection = (value: unknown): value is Direction =>
   value === "N" || value === "E" || value === "S" || value === "W";
 
@@ -81,7 +158,32 @@ const toEntityDescriptor = (
   return { kind, init: rest };
 };
 
-export const createSim = ({ width, height, seed, map }: CreateSimConfig = {}) => {
+type RestoreEntity = {
+  kind: EntityKind | (string & {});
+  pos: GridCoord;
+  rot?: unknown;
+  state?: unknown;
+};
+
+const isRestoreEntity = (value: unknown): value is RestoreEntity => {
+  if (!isObject(value)) {
+    return false;
+  }
+
+  return (
+    typeof value.kind === "string" &&
+    value.kind.length > 0 &&
+    isGridCoord(value.pos)
+  );
+};
+
+export const createSim = ({
+  width,
+  height,
+  seed,
+  map,
+  restore,
+}: CreateSimConfig = {}) => {
   const worldWidth = width ?? DEFAULT_WORLD_WIDTH;
   const worldHeight = height ?? DEFAULT_WORLD_HEIGHT;
   const worldSeed = seed ?? DEFAULT_WORLD_SEED;
@@ -111,6 +213,22 @@ export const createSim = ({ width, height, seed, map }: CreateSimConfig = {}) =>
   let tickCount = 0;
   let elapsedMs = 0;
   let runningStep = false;
+  let powerCapacity = DEFAULT_POWER_CAPACITY;
+  let powerCapacityBase = DEFAULT_POWER_CAPACITY;
+  let powerStorage = DEFAULT_POWER_STORAGE;
+  let powerDemandThisTick = 0;
+  let powerConsumedThisTick = 0;
+  let powerGeneratedThisTick = 0;
+  let powerNetworkState = createDefaultPowerNetworkState();
+  let powerDemandTotal = 0;
+  let powerConsumedTotal = 0;
+  let powerGeneratedTotal = 0;
+  let powerShortagesTotal = 0;
+  let powerDemandByKind: PowerBuckets = {};
+  let powerConsumedByKind: PowerBuckets = {};
+  let powerGeneratedByKind: PowerBuckets = {};
+  let powerShortagesThisTick = 0;
+  let powerConnectedConsumerIds: Set<string> = new Set();
   const insertionOrderById = new Map<string, number>();
   let startupProbeState: StartupProbeState = { phase: "init" };
 
@@ -334,6 +452,384 @@ export const createSim = ({ width, height, seed, map }: CreateSimConfig = {}) =>
     }
   };
 
+  const ensureRestoreDirection = (value: unknown): Direction => {
+    if (value === "N" || value === "E" || value === "S" || value === "W") {
+      return value;
+    }
+    return DEFAULT_ROTATION;
+  };
+
+  const clampRestoreInteger = (value: unknown): number => {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return 0;
+    }
+    return Math.max(0, Math.floor(value));
+  };
+
+  const clampRestoreFloat = (value: unknown): number => {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return 0;
+    }
+    return Math.max(0, value);
+  };
+
+  const hydrateState = (targetState: unknown, sourceState: unknown): void => {
+    if (!isObject(targetState) || !isObject(sourceState)) {
+      return;
+    }
+
+    const normalizedSource = cloneSnapshotValue(sourceState);
+    if (!isObject(normalizedSource)) {
+      return;
+    }
+
+    for (const key of Object.keys(normalizedSource)) {
+      targetState[key] = normalizedSource[key];
+    }
+  };
+
+  const mergeState = (target: unknown, source: unknown): unknown => {
+    if (target === undefined) {
+      return cloneSnapshotValue(source);
+    }
+
+    hydrateState(target, source);
+    return target;
+  };
+
+  const normalizePowerPositive = (value: unknown, fallback: number): number => {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return fallback;
+    }
+
+    return Math.max(0, Math.floor(value));
+  };
+
+  const normalizePowerCapacity = (value: unknown): number => {
+    const normalized = normalizePowerPositive(value, DEFAULT_POWER_CAPACITY);
+    return Math.max(1, normalized);
+  };
+
+  const computePowerCapacityWithAccumulators = (accumulatorCount: number): number => {
+    const accumulatorCapacity = Math.max(0, Math.floor(accumulatorCount)) * ACCUMULATOR_POWER_CAPACITY;
+    return Math.max(1, powerCapacityBase + accumulatorCapacity);
+  };
+
+  const applyDynamicPowerCapacity = (accumulatorCount: number): void => {
+    powerCapacity = computePowerCapacityWithAccumulators(accumulatorCount);
+    if (powerStorage > powerCapacity) {
+      powerStorage = powerCapacity;
+    }
+  };
+
+  const resetTickPowerAccounting = (): void => {
+    powerDemandThisTick = 0;
+    powerConsumedThisTick = 0;
+    powerGeneratedThisTick = 0;
+    powerDemandByKind = {};
+    powerConsumedByKind = {};
+    powerGeneratedByKind = {};
+    powerShortagesThisTick = 0;
+  };
+
+  const addPowerRecord = (records: PowerBuckets, kind: string, amount: number): void => {
+    if (amount <= 0) {
+      return;
+    }
+
+    records[kind] = (records[kind] ?? 0) + amount;
+  };
+
+  const getSimPowerState = (): SimPowerState => {
+    return {
+      storage: powerStorage,
+      capacity: powerCapacity,
+      demandThisTick: powerDemandThisTick,
+      consumedThisTick: powerConsumedThisTick,
+      generatedThisTick: powerGeneratedThisTick,
+      networkProducers: powerNetworkState.producers,
+      networkConsumers: powerNetworkState.consumers,
+      networkConnectedConsumers: powerNetworkState.connectedConsumers,
+      networkDisconnectedConsumers: powerNetworkState.disconnectedConsumers,
+      demandTotal: powerDemandTotal,
+      consumedTotal: powerConsumedTotal,
+      generatedTotal: powerGeneratedTotal,
+      shortagesTotal: powerShortagesTotal,
+      demandByKind: { ...powerDemandByKind },
+      consumedByKind: { ...powerConsumedByKind },
+      generatedByKind: { ...powerGeneratedByKind },
+      shortagesThisTick: powerShortagesThisTick,
+    };
+  };
+
+  const consumePower = (amount: unknown, kind = "unknown", consumerId?: unknown): boolean => {
+    if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) {
+      return true;
+    }
+
+    const requested = Math.floor(amount);
+    powerDemandThisTick += requested;
+    powerDemandTotal += requested;
+    addPowerRecord(powerDemandByKind, kind, requested);
+
+    if (typeof consumerId === "string" && !powerConnectedConsumerIds.has(consumerId)) {
+      powerShortagesThisTick += 1;
+      powerShortagesTotal += 1;
+      return false;
+    }
+
+    if (requested > powerStorage) {
+      powerShortagesThisTick += 1;
+      powerShortagesTotal += 1;
+      return false;
+    }
+
+    powerStorage -= requested;
+    powerConsumedThisTick += requested;
+    powerConsumedTotal += requested;
+    addPowerRecord(powerConsumedByKind, kind, requested);
+    return true;
+  };
+
+  const generatePower = (amount: unknown, kind = "unknown"): number => {
+    if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) {
+      return 0;
+    }
+
+    const requested = Math.floor(amount);
+    const availableCapacity = Math.max(0, powerCapacity - powerStorage);
+    const granted = Math.min(requested, availableCapacity);
+    powerStorage += granted;
+    powerGeneratedThisTick += granted;
+    powerGeneratedTotal += granted;
+    addPowerRecord(powerGeneratedByKind, kind, granted);
+    return granted;
+  };
+
+  const clearEntities = (): void => {
+    entitiesById.clear();
+    entitiesByCell.clear();
+    cellKeyById.clear();
+    publicEntitiesById.clear();
+    publicEntitiesByCell.clear();
+    publicCellKeyById.clear();
+    insertionOrderById.clear();
+    nextEntityId = 1;
+    nextEntityInsertionOrder = 0;
+  };
+
+  const resetStartupProbeForRestore = (): void => {
+    startupProbeState = tick > 0 || tickCount > 0 ? { phase: "running" } : { phase: "init" };
+  };
+
+  const applyPowerNetworkState = (payload: {
+    producers?: unknown;
+    consumers?: unknown;
+    connectedConsumers?: unknown;
+    disconnectedConsumers?: unknown;
+  }): void => {
+    const safeState = createDefaultPowerNetworkState();
+
+    if (typeof payload?.producers === "number" && Number.isFinite(payload.producers)) {
+      safeState.producers = Math.max(0, Math.floor(payload.producers));
+    }
+    if (typeof payload?.consumers === "number" && Number.isFinite(payload.consumers)) {
+      safeState.consumers = Math.max(0, Math.floor(payload.consumers));
+    }
+    if (typeof payload?.connectedConsumers === "number" && Number.isFinite(payload.connectedConsumers)) {
+      safeState.connectedConsumers = Math.max(0, Math.floor(payload.connectedConsumers));
+    }
+    if (
+      typeof payload?.disconnectedConsumers === "number" &&
+      Number.isFinite(payload.disconnectedConsumers)
+    ) {
+      safeState.disconnectedConsumers = Math.max(0, Math.floor(payload.disconnectedConsumers));
+    }
+
+    powerNetworkState = safeState;
+  };
+
+  const computePowerNetworkState = (): PowerNetworkAnalysis => {
+    const powerNodeIds = new Set<string>();
+    const producers = new Set<string>();
+    const consumers = new Set<string>();
+    const connectedConsumerIds = new Set<string>();
+    const nodesByCell = new Map<string, Set<string>>();
+    const nodesById = new Map<string, { x: number; y: number; isConsumer: boolean; isProducer: boolean }>();
+
+    for (const [id, entity] of entitiesById) {
+      const kind = String(entity.kind);
+      const isProducer = isPowerProducerKind(kind);
+      const isConsumer = isPowerConsumerKind(kind);
+
+      if (!isProducer && !isConsumer) {
+        continue;
+      }
+
+      const cellKey = toCellKey(entity.pos);
+      powerNodeIds.add(id);
+
+      if (isProducer) {
+        producers.add(id);
+      }
+      if (isConsumer) {
+        consumers.add(id);
+      }
+
+      nodesById.set(id, {
+        x: entity.pos.x,
+        y: entity.pos.y,
+        isConsumer,
+        isProducer,
+      });
+
+      let cellMembers = nodesByCell.get(cellKey);
+      if (cellMembers === undefined) {
+        cellMembers = new Set<string>();
+        nodesByCell.set(cellKey, cellMembers);
+      }
+      cellMembers.add(id);
+    }
+
+    if (producers.size === 0) {
+      return {
+        producers: 0,
+        consumers: consumers.size,
+        connectedConsumers: 0,
+        disconnectedConsumers: consumers.size,
+        connectedConsumerIds,
+      };
+    }
+
+    const searchQueue: string[] = Array.from(producers);
+    const visited = new Set<string>(searchQueue);
+
+    while (searchQueue.length > 0) {
+      const nodeId = searchQueue.shift();
+      if (nodeId === undefined) {
+        continue;
+      }
+
+      const node = nodesById.get(nodeId);
+      if (node === undefined) {
+        continue;
+      }
+
+      if (node.isConsumer) {
+        connectedConsumerIds.add(nodeId);
+      }
+
+      const adjacentKeys = POWER_NET_NEIGHBOR_OFFSETS.map(({ x, y }) =>
+        toCellKey({ x: node.x + x, y: node.y + y }),
+      );
+
+      for (const adjacentKey of adjacentKeys) {
+        const adjacentNodeIds = nodesByCell.get(adjacentKey);
+        if (adjacentNodeIds === undefined) {
+          continue;
+        }
+
+        for (const adjacentId of adjacentNodeIds) {
+          if (visited.has(adjacentId)) {
+            continue;
+          }
+
+          const adjacentNode = nodesById.get(adjacentId);
+          if (adjacentNode === undefined) {
+            continue;
+          }
+
+          if (!nodesById.has(adjacentId) || !powerNodeIds.has(adjacentId)) {
+            continue;
+          }
+
+          if (adjacentNode.isProducer || adjacentNode.isConsumer) {
+            visited.add(adjacentId);
+            searchQueue.push(adjacentId);
+          }
+        }
+      }
+    }
+
+    const connectedConsumers = connectedConsumerIds.size;
+    const totalConsumers = consumers.size;
+
+    return {
+      producers: producers.size,
+      consumers: totalConsumers,
+      connectedConsumers,
+      disconnectedConsumers: Math.max(0, totalConsumers - connectedConsumers),
+      connectedConsumerIds,
+    };
+  };
+
+  let isRestoring = false;
+
+  const restoreFromPayload = (payload: CreateSimConfig["restore"]): void => {
+    if (!isObject(payload) || isRestoring) {
+      return;
+    }
+
+    isRestoring = true;
+    try {
+      clearEntities();
+      paused = payload.paused === true;
+      tick = clampRestoreInteger(payload.tick);
+      tickCount = clampRestoreInteger(payload.tickCount);
+      elapsedMs = clampRestoreFloat(payload.elapsedMs);
+      accumulatorMs = clampRestoreFloat(payload.accumulatorMs);
+          powerCapacityBase = normalizePowerCapacity(payload.power?.capacity);
+          powerStorage = normalizePowerPositive(payload.power?.storage, DEFAULT_POWER_STORAGE);
+          powerDemandTotal = normalizePowerPositive(payload.power?.demandTotal, 0);
+      powerConsumedTotal = normalizePowerPositive(payload.power?.consumedTotal, 0);
+      powerGeneratedTotal = normalizePowerPositive(payload.power?.generatedTotal, 0);
+      powerShortagesTotal = normalizePowerPositive(payload.power?.shortagesTotal, 0);
+      powerStorage = Math.min(powerStorage, powerCapacityBase);
+      powerStorage = Math.max(0, powerStorage);
+      applyDynamicPowerCapacity(0);
+      resetTickPowerAccounting();
+
+      const rawEntities = payload.entities;
+      if (Array.isArray(rawEntities)) {
+        for (const rawEntity of rawEntities) {
+          if (!isRestoreEntity(rawEntity)) {
+            continue;
+          }
+
+          if (isOutOfBounds(rawEntity.pos, worldWidth, worldHeight)) {
+            continue;
+          }
+
+          const candidateKind = rawEntity.kind;
+          if (getDefinition(candidateKind) === undefined) {
+            continue;
+          }
+
+          addEntity(candidateKind, {
+            pos: {
+              x: rawEntity.pos.x,
+              y: rawEntity.pos.y,
+            },
+            rot: ensureRestoreDirection(rawEntity.rot),
+            state: rawEntity.state,
+          });
+        }
+      }
+
+      let restoredAccumulatorCount = 0;
+      for (const entity of entitiesById.values()) {
+        if (entity.kind === "accumulator") {
+          restoredAccumulatorCount += 1;
+        }
+      }
+      applyDynamicPowerCapacity(restoredAccumulatorCount);
+      resetStartupProbeForRestore();
+      publishPublicState();
+    } finally {
+      isRestoring = false;
+    }
+  };
+
   const getEntityById = (id: string): EntityBase | undefined => {
     return getInternalEntityById(id);
   };
@@ -396,7 +892,7 @@ export const createSim = ({ width, height, seed, map }: CreateSimConfig = {}) =>
       kind,
       pos: { ...init.pos },
       rot,
-      ...(createdState === undefined ? {} : { state: createdState }),
+      ...(createdState === undefined ? {} : { state: mergeState(createdState, init.state) }),
     } as EntityBase;
 
     entitiesById.set(id, entity);
@@ -404,7 +900,9 @@ export const createSim = ({ width, height, seed, map }: CreateSimConfig = {}) =>
       entitiesByCell,
       cellKeyById,
     });
-    publishAfterMutation();
+    if (!isRestoring) {
+      publishAfterMutation();
+    }
 
     return id;
   };
@@ -427,6 +925,7 @@ export const createSim = ({ width, height, seed, map }: CreateSimConfig = {}) =>
     runningStep = true;
     try {
       advanceStartupProbeState();
+      resetTickPowerAccounting();
       const tickStartEntitySnapshotById = new Map<string, EntityBase>();
       const tickStartEntityIdsByCell = new Map<string, Set<string>>();
 
@@ -440,6 +939,23 @@ export const createSim = ({ width, height, seed, map }: CreateSimConfig = {}) =>
         }
         idsAtCell.add(id);
       }
+
+      let accumulatorCount = 0;
+      for (const entitySnapshot of tickStartEntitySnapshotById.values()) {
+        if (entitySnapshot.kind === "accumulator") {
+          accumulatorCount += 1;
+        }
+      }
+      applyDynamicPowerCapacity(accumulatorCount);
+
+      const network = computePowerNetworkState();
+      powerNetworkState = {
+        producers: network.producers,
+        consumers: network.consumers,
+        connectedConsumers: network.connectedConsumers,
+        disconnectedConsumers: network.disconnectedConsumers,
+      };
+      powerConnectedConsumerIds = network.connectedConsumerIds;
 
       const ids = Array.from(entitiesById.keys()).sort((leftId, rightId) => {
         const leftEntity = entitiesById.get(leftId);
@@ -513,6 +1029,11 @@ export const createSim = ({ width, height, seed, map }: CreateSimConfig = {}) =>
         getLiveEntitiesAt: getInternalEntitiesAt,
         getLiveEntityById: getInternalEntityById,
         getLiveAllEntities: getInternalAllEntities,
+        consumePower,
+        generatePower,
+        isPowerConsumerConnected: (entityId: string): boolean =>
+          powerConnectedConsumerIds.has(entityId),
+        getPowerState: getSimPowerState,
       };
 
       for (const id of ids) {
@@ -583,6 +1104,10 @@ export const createSim = ({ width, height, seed, map }: CreateSimConfig = {}) =>
     }
   };
 
+    if (restore !== undefined) {
+      restoreFromPayload(restore);
+    }
+
   const sim = {
     width: worldWidth,
     height: worldHeight,
@@ -598,6 +1123,9 @@ export const createSim = ({ width, height, seed, map }: CreateSimConfig = {}) =>
     },
     togglePause(): void {
       paused = !paused;
+    },
+    restoreState(payload: CreateSimConfig["restore"]): void {
+      restoreFromPayload(payload);
     },
     addEntity,
     removeEntity,
@@ -624,6 +1152,25 @@ export const createSim = ({ width, height, seed, map }: CreateSimConfig = {}) =>
     },
     get elapsedMs(): number {
       return elapsedMs;
+    },
+    get powerStorage(): number {
+      return powerStorage;
+    },
+    get powerCapacity(): number {
+      return powerCapacity;
+    },
+    consumePower,
+    generatePower,
+    getPowerState(): SimPowerState {
+      return getSimPowerState();
+    },
+    setPowerNetworkState(payload: {
+      producers?: unknown;
+      consumers?: unknown;
+      connectedConsumers?: unknown;
+      disconnectedConsumers?: unknown;
+    }): void {
+      applyPowerNetworkState(payload);
     },
     step,
   };

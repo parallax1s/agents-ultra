@@ -18,6 +18,7 @@ export type SnapshotTiming = {
   readonly tick: number;
   readonly elapsedMs: number;
   readonly tickCount: number;
+  readonly revision: number;
 };
 
 export type SnapshotProbe = StartupProbeState;
@@ -34,7 +35,9 @@ export type SnapshotEntity = {
   readonly rot: Direction;
   readonly light?: unknown;
   readonly items?: ReadonlyArray<ItemKind | null>;
+  readonly accept?: ItemKind;
   readonly hasOutput?: boolean;
+  readonly justMined?: boolean;
   readonly state?: "idle" | "pickup" | "swing" | "drop";
   readonly holding?: ItemKind | null;
   readonly inputOccupied?: boolean;
@@ -55,6 +58,8 @@ export type Snapshot = Readonly<{
   readonly time: SnapshotTiming;
   readonly probe: SnapshotProbe;
   readonly ore: ReadonlyArray<Readonly<SnapshotOreCell>>;
+  readonly coal: ReadonlyArray<Readonly<SnapshotOreCell>>;
+  readonly wood: ReadonlyArray<Readonly<SnapshotOreCell>>;
   readonly entities: ReadonlyArray<SnapshotEntity>;
   readonly player?: SnapshotPlayer;
 }>;
@@ -63,6 +68,9 @@ type SnapshotMap = {
   readonly width: number;
   readonly height: number;
   readonly isOre: (x: number, y: number) => boolean;
+  readonly isCoal: (x: number, y: number) => boolean;
+  readonly isTree: (x: number, y: number) => boolean;
+  readonly getResourceRevision?: () => unknown;
 };
 
 type SnapshotSim = {
@@ -73,7 +81,7 @@ type SnapshotSim = {
   readonly tick?: number;
   readonly tickCount?: number;
   readonly elapsedMs?: number;
-  readonly getPlacementSnapshot?: () => { tick?: unknown; tickCount?: unknown };
+  readonly getPlacementSnapshot?: () => { tick?: unknown; tickCount?: unknown; revision?: unknown };
   readonly getStartupProbe?: () => unknown;
   readonly map?: SnapshotMap;
   readonly getMap?: () => SnapshotMap;
@@ -120,6 +128,7 @@ const asCommittedTiming = (
   proposedTick: number,
   proposedTickCount: number,
   proposedElapsedMs: number,
+  proposedRevision: number,
 ): SnapshotPublicationState => {
   if (!isObject(sim)) {
     return {
@@ -127,6 +136,7 @@ const asCommittedTiming = (
         tick: proposedTick,
         tickCount: proposedTickCount,
         elapsedMs: proposedElapsedMs,
+        revision: proposedRevision,
       },
     };
   }
@@ -138,6 +148,7 @@ const asCommittedTiming = (
         tick: proposedTick,
         tickCount: proposedTickCount,
         elapsedMs: proposedElapsedMs,
+        revision: proposedRevision,
       },
       snapshotProbe: getProbeFromSim(sim),
     };
@@ -145,14 +156,16 @@ const asCommittedTiming = (
     return initialState;
   }
 
-  const hasCommittedBoundary = proposedTick > previous.timing.tick || proposedTickCount > previous.timing.tickCount;
+  const hasCommittedBoundary =
+    proposedTick > previous.timing.tick ||
+    proposedTickCount > previous.timing.tickCount ||
+    proposedRevision !== previous.timing.revision;
   const nextTiming: SimCommittedTiming = {
     tick: proposedTick > previous.timing.tick ? proposedTick : previous.timing.tick,
     tickCount:
       proposedTickCount > previous.timing.tickCount ? proposedTickCount : previous.timing.tickCount,
-    elapsedMs: hasCommittedBoundary
-      ? (proposedElapsedMs < previous.timing.elapsedMs ? previous.timing.elapsedMs : proposedElapsedMs)
-      : previous.timing.elapsedMs,
+    elapsedMs: hasCommittedBoundary ? proposedElapsedMs : previous.timing.elapsedMs,
+    revision: hasCommittedBoundary ? proposedRevision : previous.timing.revision,
   };
   previous.timing = nextTiming;
   previous.snapshotProbe = getProbeFromSim(sim);
@@ -201,7 +214,13 @@ const cloneSnapshotValue = (value: unknown, seen = new WeakMap<object, unknown>(
 };
 
 const isItemKind = (value: unknown): value is ItemKind => {
-  return value === "iron-ore" || value === "iron-plate";
+  return (
+    value === "iron-ore" ||
+    value === "iron-plate" ||
+    value === "coal" ||
+    value === "iron-gear" ||
+    value === "wood"
+  );
 };
 
 const clampProgress01 = (value: number): number => {
@@ -238,7 +257,9 @@ const getSnapshotMap = (sim: SnapshotSim): SnapshotMap | undefined => {
   return undefined;
 };
 
-const getPlacementTiming = (sim: SnapshotSim): { tick?: unknown; tickCount?: unknown } | undefined => {
+const getPlacementTiming = (
+  sim: SnapshotSim,
+): { tick?: unknown; tickCount?: unknown; revision?: unknown } | undefined => {
   if (typeof sim.getPlacementSnapshot !== "function") {
     return undefined;
   }
@@ -249,6 +270,7 @@ const getPlacementTiming = (sim: SnapshotSim): { tick?: unknown; tickCount?: unk
       return {
         tick: snapshot.tick,
         tickCount: snapshot.tickCount,
+        revision: snapshot.revision,
       };
     }
   } catch {
@@ -264,6 +286,34 @@ const createOreList = (map: SnapshotMap): ReadonlyArray<Readonly<SnapshotOreCell
   for (let y = 0; y < map.height; y += 1) {
     for (let x = 0; x < map.width; x += 1) {
       if (map.isOre(x, y)) {
+        cells.push({ x, y });
+      }
+    }
+  }
+
+  return cells;
+};
+
+const createCoalList = (map: SnapshotMap): ReadonlyArray<Readonly<SnapshotOreCell>> => {
+  const cells: SnapshotOreCell[] = [];
+
+  for (let y = 0; y < map.height; y += 1) {
+    for (let x = 0; x < map.width; x += 1) {
+      if (map.isCoal(x, y)) {
+        cells.push({ x, y });
+      }
+    }
+  }
+
+  return cells;
+};
+
+const createWoodList = (map: SnapshotMap): ReadonlyArray<Readonly<SnapshotOreCell>> => {
+  const cells: SnapshotOreCell[] = [];
+
+  for (let y = 0; y < map.height; y += 1) {
+    for (let x = 0; x < map.width; x += 1) {
+      if (map.isTree(x, y)) {
         cells.push({ x, y });
       }
     }
@@ -365,18 +415,57 @@ const getProbeFromSim = (sim: SnapshotSim): SnapshotProbe => {
   };
 };
 
-const oreListCache = new WeakMap<object, ReadonlyArray<Readonly<SnapshotOreCell>>>();
+type CachedResourceList = Map<number, ReadonlyArray<Readonly<SnapshotOreCell>>>;
 
-const getCachedOreList = (map: SnapshotMap): ReadonlyArray<Readonly<SnapshotOreCell>> => {
-  const cacheKey = map as object;
-  const cached = oreListCache.get(cacheKey);
-  if (cached !== undefined) {
-    return cached;
+const oreListCache = new WeakMap<object, CachedResourceList>();
+const coalListCache = new WeakMap<object, CachedResourceList>();
+const woodListCache = new WeakMap<object, CachedResourceList>();
+
+const getMapResourceRevision = (map: SnapshotMap): number => {
+  const rawRevision = typeof map.getResourceRevision === "function" ? map.getResourceRevision() : 0;
+  if (typeof rawRevision === "number" && Number.isInteger(rawRevision) && rawRevision >= 0) {
+    return rawRevision;
   }
 
-  const computed = createOreList(map);
-  oreListCache.set(cacheKey, computed);
+  if (typeof rawRevision === "string") {
+    const parsed = Number.parseInt(rawRevision, 10);
+    return Number.isFinite(parsed) && Number.isInteger(parsed) && parsed >= 0 ? parsed : 0;
+  }
+
+  return 0;
+};
+
+const getCachedResourceList = <T>(
+  cacheMap: WeakMap<object, CachedResourceList>,
+  map: SnapshotMap,
+  createList: (value: SnapshotMap) => ReadonlyArray<T>,
+): ReadonlyArray<T> => {
+  const cacheKey = map as object;
+  const revision = getMapResourceRevision(map);
+  const revisionCache = cacheMap.get(cacheKey);
+  const cached = revisionCache?.get(revision);
+
+  if (cached !== undefined) {
+    return cached as ReadonlyArray<T>;
+  }
+
+  const nextRevisionCache = revisionCache === undefined ? new Map<number, ReadonlyArray<Readonly<SnapshotOreCell>>>() : new Map(revisionCache);
+  const computed = createList(map) as ReadonlyArray<T>;
+  nextRevisionCache.set(revision, computed);
+  cacheMap.set(cacheKey, nextRevisionCache);
   return computed;
+};
+
+const getCachedOreList = (map: SnapshotMap): ReadonlyArray<Readonly<SnapshotOreCell>> => {
+  return getCachedResourceList(oreListCache, map, createOreList);
+};
+
+const getCachedCoalList = (map: SnapshotMap): ReadonlyArray<Readonly<SnapshotOreCell>> => {
+  return getCachedResourceList(coalListCache, map, createCoalList);
+};
+
+const getCachedWoodList = (map: SnapshotMap): ReadonlyArray<Readonly<SnapshotOreCell>> => {
+  return getCachedResourceList(woodListCache, map, createWoodList);
 };
 
 const extractLightState = (entity: EntityBase): unknown => {
@@ -399,6 +488,14 @@ const extractBeltItems = (state: SnapshotState | undefined): ReadonlyArray<ItemK
   }
 
   return asItemList(state.slots) ?? [];
+};
+
+const extractBeltAccept = (state: SnapshotState | undefined): ItemKind | undefined => {
+  if (!isItemKind(state?.accept)) {
+    return undefined;
+  }
+
+  return state.accept;
 };
 
 const extractMinerHasOutput = (state: SnapshotState | undefined): boolean | undefined => {
@@ -425,6 +522,14 @@ const extractMinerHasOutput = (state: SnapshotState | undefined): boolean | unde
   }
 
   return undefined;
+};
+
+const extractMinerJustMined = (state: SnapshotState | undefined): boolean | undefined => {
+  if (state === undefined) {
+    return undefined;
+  }
+
+  return state.justMined === true ? true : undefined;
 };
 
 const extractInserterState = (state: unknown): SnapshotInserterState => {
@@ -537,18 +642,22 @@ const createEntitySnapshot = (entity: EntityBase): SnapshotEntity => {
     light: cloneSnapshotValue(extractLightState(entity)),
   };
 
-  if (entity.kind === "belt") {
+  if (entity.kind === "belt" || entity.kind === "splitter") {
+    const accept = extractBeltAccept(entityState);
     return {
       ...baseSnapshot,
       items: extractBeltItems(entityState),
+      ...(accept === undefined ? {} : { accept }),
     };
   }
 
   if (entity.kind === "miner") {
     const hasOutput = extractMinerHasOutput(entityState);
+    const justMined = extractMinerJustMined(entityState);
     return {
       ...baseSnapshot,
       ...(hasOutput === undefined ? {} : { hasOutput }),
+      ...(justMined === true ? { justMined: true } : {}),
     };
   }
 
@@ -560,7 +669,7 @@ const createEntitySnapshot = (entity: EntityBase): SnapshotEntity => {
     };
   }
 
-  if (entity.kind === "furnace") {
+  if (entity.kind === "furnace" || entity.kind === "assembler") {
     return {
       ...baseSnapshot,
       inputOccupied: extractFurnaceBooleanField(entityState, "inputOccupied") ?? false,
@@ -592,10 +701,12 @@ export const createSnapshot = (sim: SnapshotSim): Snapshot => {
   const tileSize = typeof sim.tileSize === "number" && Number.isFinite(sim.tileSize)
     ? sim.tileSize
     : DEFAULT_TILE_SIZE;
-  const timing = asCommittedTiming(sim, tick, tickCount, elapsedMs);
+  const revision = clampBoundaryCounter(placement?.revision);
+  const timing = asCommittedTiming(sim, tick, tickCount, elapsedMs, revision);
   if (
     timing.snapshot !== undefined &&
     timing.timing.tick === timing.snapshot.time.tick &&
+    timing.timing.revision === timing.snapshot.time.revision &&
     timing.timing.tickCount === timing.snapshot.time.tickCount &&
     timing.snapshotWidth === width &&
     timing.snapshotHeight === height &&
@@ -609,6 +720,8 @@ export const createSnapshot = (sim: SnapshotSim): Snapshot => {
   }
 
   const ore = map === undefined ? [] : getCachedOreList(map);
+  const coal = map === undefined ? [] : getCachedCoalList(map);
+  const wood = map === undefined ? [] : getCachedWoodList(map);
   const entities = sim.getAllEntities?.() ?? [];
   const player = createPlayerSnapshot(sim);
 
@@ -622,9 +735,12 @@ export const createSnapshot = (sim: SnapshotSim): Snapshot => {
       tick: timing.timing.tick,
       elapsedMs: timing.timing.elapsedMs,
       tickCount: timing.timing.tickCount,
+      revision: timing.timing.revision,
     },
     probe: getProbeFromSim(sim),
     ore,
+    coal,
+    wood,
     entities: entities.slice().sort(compareSnapshotEntityIds).map(createEntitySnapshot),
     ...(player === undefined ? {} : { player }),
   };

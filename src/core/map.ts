@@ -5,7 +5,7 @@ type GridCoord = {
   y: number;
 };
 
-export type MapOccupantKind = "miner" | "belt" | "inserter" | "furnace" | "chest";
+export type MapOccupantKind = "miner" | "belt" | "splitter" | "inserter" | "furnace" | "assembler" | "chest" | "solar-panel" | "accumulator";
 
 export type MapPlacementFailureReason = "occupied" | "out-of-bounds" | "invalid-miner-on-resource";
 
@@ -77,6 +77,11 @@ export interface GeneratedMap {
   height: number;
   getTile: (x: number, y: number) => TileType | undefined;
   isOre: (x: number, y: number) => boolean;
+  isCoal: (x: number, y: number) => boolean;
+  isTree: (x: number, y: number) => boolean;
+  getResourceRevision?: () => number;
+  consumeResource?: (x: number, y: number) => boolean;
+  getResourceAmountAt?: (x: number, y: number) => number;
   isWithinBounds: (x: number, y: number) => boolean;
   hasEntityAt: (tile: GridCoord) => boolean;
   place: (kind: MapOccupantKind, tile: GridCoord) => MapPlacementResult;
@@ -186,14 +191,18 @@ export function createMap(width: number, height: number, seed: number | string):
   }
 
   const oreMask = new Uint8Array(width * height);
+  const coalOreMask = new Uint8Array(width * height);
+  const treeMask = new Uint8Array(width * height);
   const occupants = new Map<string, MapOccupantKind>();
   const lastIngressTickByTile = new Map<string, number>();
   let currentTransferTick = 0;
   let isTransferTickCommitScheduled = false;
+  let resourceRevision = 0;
   const random = createPrng(seed);
   const keyForTile = (x: number, y: number): string => `${x},${y}`;
   const tileCopy = (tile: GridCoord): GridCoord => ({ x: tile.x, y: tile.y });
   const isIntegerCoord = (value: number): value is number => Number.isInteger(value);
+  const rollResourceAmount = (): number => 2 + Math.floor(random() * 4);
 
   const scheduleTransferTickCommit = (): void => {
     if (isTransferTickCommitScheduled) {
@@ -275,12 +284,118 @@ export function createMap(width: number, height: number, seed: number | string):
   const isSpawnTile = (x: number, y: number): boolean =>
     x >= spawnStartX && x <= spawnEndX && y >= spawnStartY && y <= spawnEndY;
 
-  const writeOre = (x: number, y: number): void => {
+  const writeResource = (x: number, y: number, isCoalResource: boolean): void => {
     if (!isWithinBounds(x, y) || isSpawnTile(x, y)) {
       return;
     }
 
-    oreMask[y * width + x] = 1;
+    const index = y * width + x;
+    const amount = rollResourceAmount();
+    if (isCoalResource) {
+      oreMask[index] = 0;
+      coalOreMask[index] = amount;
+      return;
+    }
+
+    coalOreMask[index] = 0;
+    oreMask[index] = amount;
+  };
+
+  const writeTree = (x: number, y: number): void => {
+    if (!isWithinBounds(x, y) || isSpawnTile(x, y)) {
+      return;
+    }
+
+    const index = y * width + x;
+    treeMask[index] = rollResourceAmount();
+    oreMask[index] = 0;
+    coalOreMask[index] = 0;
+  };
+
+  const isIronOre = (x: number, y: number): boolean => {
+    if (!isWithinBounds(x, y)) {
+      return false;
+    }
+
+    return oreMask[y * width + x] > 0;
+  };
+
+  const isCoalOre = (x: number, y: number): boolean => {
+    if (!isWithinBounds(x, y)) {
+      return false;
+    }
+
+    return coalOreMask[y * width + x] > 0;
+  };
+
+  const isTree = (x: number, y: number): boolean => {
+    if (!isWithinBounds(x, y)) {
+      return false;
+    }
+
+    return treeMask[y * width + x] > 0;
+  };
+
+  const isOre = (x: number, y: number): boolean => {
+    return isIronOre(x, y) || isCoalOre(x, y);
+  };
+
+  const touchResourceRevision = (): void => {
+    resourceRevision += 1;
+  };
+
+  const consumeResource = (x: number, y: number): boolean => {
+    if (!isWithinBounds(x, y)) {
+      return false;
+    }
+
+    const index = y * width + x;
+    if (oreMask[index] === 0 && coalOreMask[index] === 0 && treeMask[index] === 0) {
+      return false;
+    }
+
+    if (treeMask[index] > 0) {
+      treeMask[index] -= 1;
+      touchResourceRevision();
+      return true;
+    }
+
+    if (oreMask[index] > 0) {
+      oreMask[index] -= 1;
+      touchResourceRevision();
+      return true;
+    }
+
+    if (coalOreMask[index] > 0) {
+      coalOreMask[index] -= 1;
+      touchResourceRevision();
+      return true;
+    }
+
+    return false;
+  };
+
+  const getResourceRevision = (): number => resourceRevision;
+
+  const getResourceAmountAt = (x: number, y: number): number => {
+    if (!isWithinBounds(x, y)) {
+      return 0;
+    }
+
+    const index = y * width + x;
+    if (oreMask[index] > 0) {
+      return oreMask[index];
+    }
+
+    if (coalOreMask[index] > 0) {
+      return coalOreMask[index];
+    }
+
+    if (treeMask[index] > 0) {
+      return treeMask[index];
+    }
+
+    return 0;
   };
 
   const availableTiles = width * height - spawnWidth * spawnHeight;
@@ -324,10 +439,12 @@ export function createMap(width: number, height: number, seed: number | string):
           const densityNoise = random();
           if (distance <= shapeNoise && densityNoise >= distance * 0.18) {
             const idx = y * width + x;
-            if (oreMask[idx] === 0) {
+            if (oreMask[idx] === 0 && coalOreMask[idx] === 0) {
               oreTileCount += 1;
             }
-            oreMask[idx] = 1;
+
+            const isCoalResource = random() < 0.25;
+            writeResource(x, y, isCoalResource);
           }
         }
       }
@@ -339,24 +456,77 @@ export function createMap(width: number, height: number, seed: number | string):
         const x = Math.floor(random() * width);
         const y = Math.floor(random() * height);
         if (!isSpawnTile(x, y)) {
-          writeOre(x, y);
+          writeResource(x, y, random() < 0.25);
           break;
         }
       }
     }
   }
 
-  const isOre = (x: number, y: number): boolean => {
-    if (!isWithinBounds(x, y)) {
-      return false;
+  const treePatchCount = Math.max(1, Math.floor((width * height) / 300));
+  for (let patchIndex = 0; patchIndex < treePatchCount; patchIndex += 1) {
+    let centerX = 0;
+    let centerY = 0;
+    let hasCenter = false;
+
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const candidateX = Math.floor(random() * width);
+      const candidateY = Math.floor(random() * height);
+      if (!isSpawnTile(candidateX, candidateY) && !isOre(candidateX, candidateY) && !isTree(candidateX, candidateY)) {
+        centerX = candidateX;
+        centerY = candidateY;
+        hasCenter = true;
+        break;
+      }
     }
 
-    return oreMask[y * width + x] === 1;
-  };
+    if (!hasCenter) {
+      continue;
+    }
+
+    const radius = 1 + Math.floor(random() * 4);
+    const density = 0.2 + random() * 0.55;
+
+    for (let y = centerY - radius; y <= centerY + radius; y += 1) {
+      for (let x = centerX - radius; x <= centerX + radius; x += 1) {
+        if (!isWithinBounds(x, y) || isSpawnTile(x, y) || isOre(x, y) || isTree(x, y)) {
+          continue;
+        }
+
+        const normX = (x - centerX) / radius;
+        const normY = (y - centerY) / radius;
+        const distance = normX * normX + normY * normY;
+        if (distance <= 1.05 && random() < (1 - distance * 0.33) * density) {
+          writeTree(x, y);
+        }
+      }
+    }
+  }
+
+  if (!treeMask.some((value) => value > 0)) {
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      const x = Math.floor(random() * width);
+      const y = Math.floor(random() * height);
+      if (!isSpawnTile(x, y) && !isOre(x, y) && !isTree(x, y)) {
+        writeTree(x, y);
+        break;
+      }
+    }
+  }
+
+  const isCoal = (x: number, y: number): boolean => isCoalOre(x, y);
 
   const getTile = (x: number, y: number): TileType | undefined => {
     if (!isWithinBounds(x, y)) {
       return undefined;
+    }
+
+    if (isTree(x, y)) {
+      return "tree";
+    }
+
+    if (isCoalOre(x, y)) {
+      return "coal-ore";
     }
 
     return isOre(x, y) ? "iron-ore" : "empty";
@@ -379,7 +549,7 @@ export function createMap(width: number, height: number, seed: number | string):
       return makePlacementFailure("occupied", tile);
     }
 
-    if (kind === "miner" && !isOre(tile.x, tile.y)) {
+    if (kind === "miner" && !isOre(tile.x, tile.y) && !isTree(tile.x, tile.y)) {
       return makePlacementFailure("invalid-miner-on-resource", tile);
     }
 
@@ -395,7 +565,7 @@ export function createMap(width: number, height: number, seed: number | string):
     const key = keyForTile(tile.x, tile.y);
     const removedKind = occupants.get(key);
     if (removedKind === undefined) {
-      if (isOre(tile.x, tile.y)) {
+      if (isOre(tile.x, tile.y) || isTree(tile.x, tile.y)) {
         return makeRemovalFailure("non-removable-resource", tile);
       }
 
@@ -595,6 +765,11 @@ export function createMap(width: number, height: number, seed: number | string):
     height,
     getTile,
     isOre,
+    isCoal,
+    isTree,
+    getResourceRevision,
+    getResourceAmountAt,
+    consumeResource,
     isWithinBounds,
     hasEntityAt,
     place,
