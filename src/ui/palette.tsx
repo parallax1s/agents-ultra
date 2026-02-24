@@ -1,21 +1,24 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ALL_ENTITY_KINDS, type EntityKind } from './placement';
+import { ALL_ENTITY_KINDS, TOOLBAR_ENTITY_ORDER, type EntityKind } from './placement';
 
 type PaletteProps = {
   kinds?: EntityKind[];
   selectedKind: EntityKind | null;
-  onSelect: (k: EntityKind) => void;
+  onSelect?: (k: EntityKind) => void;
+  onSelectKind?: (k: EntityKind) => void;
   className?: string;
 };
 
-const BUTTON_ORDER: readonly EntityKind[] = ['Miner', 'Belt', 'Inserter', 'Furnace', 'Chest'];
+const BUTTON_ORDER = TOOLBAR_ENTITY_ORDER;
 
 export default function Palette({
   kinds = ALL_ENTITY_KINDS,
   selectedKind,
   onSelect,
+  onSelectKind,
   className,
 }: PaletteProps) {
+  const resolveSelect = onSelect ?? onSelectKind;
   const enabledKinds = new Set<EntityKind>(kinds);
   const orderedKinds = BUTTON_ORDER.filter((kind) => enabledKinds.has(kind));
   const currentTool = selectedKind ?? 'None';
@@ -69,7 +72,7 @@ export default function Palette({
 
   return (
     <div
-      className={mergedClassName}
+          className={mergedClassName}
       data-testid="palette"
       data-current-tool={currentTool}
       data-probe-state={probeState}
@@ -78,24 +81,64 @@ export default function Palette({
       <div className="palette-probe" data-testid="palette-probe" data-probe-state={probeState}>
         {statusNode}
       </div>
-      {orderedKinds.map((kind) => {
-        const isActive = selectedKind === kind;
+      <div className="palette-buttons">
+        {orderedKinds.map((kind, index) => {
+          const isActive = selectedKind === kind;
+          const hotkey = index + 1 <= 9 ? String(index + 1) : null;
+          const numericPadHotkey = hotkey === null ? null : `Numpad${hotkey}`;
 
-        return (
-          <button
-            key={kind}
-            type="button"
-            aria-pressed={isActive}
-            aria-label={`Tool ${kind}`}
-            data-active={isActive ? 'true' : 'false'}
-            data-testid={`palette-tool-${kind.toLowerCase()}`}
-            data-tool-kind={kind}
-            onClick={() => onSelect(kind)}
-          >
-            {kind}
-          </button>
-        );
-      })}
+          return (
+            <button
+              key={kind}
+              type="button"
+              aria-pressed={isActive}
+              aria-label={
+                hotkey === null
+                  ? `Tool ${kind}`
+                  : `Tool ${kind} (keys ${hotkey}, ${numericPadHotkey})`
+              }
+              data-active={isActive ? 'true' : 'false'}
+              data-tool-index={index}
+              data-hotkey={hotkey === null ? '' : `Digit${hotkey}`}
+              data-hotkey-alt={numericPadHotkey ?? ''}
+              data-testid={`palette-tool-${kind.toLowerCase()}`}
+              data-tool-kind={kind}
+              title={
+                hotkey === null
+                  ? kind
+                  : `Tool ${kind} (keys ${hotkey}, ${numericPadHotkey ?? 'n/a'})`
+              }
+              onClick={() => {
+                if (resolveSelect !== undefined) {
+                  resolveSelect(kind);
+                }
+              }}
+            >
+              {hotkey === null ? kind : (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: 16,
+                      height: 16,
+                      borderRadius: 4,
+                      fontSize: 10,
+                      background: 'rgba(255,255,255,0.15)',
+                      color: 'inherit',
+                    }}
+                  >
+                    {hotkey}
+                  </span>
+                  <span>{kind}</span>
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

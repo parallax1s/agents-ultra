@@ -1,7 +1,7 @@
 /**
  * Supported buildable entity kinds for placement.
  */
-export type EntityKind = 'Miner' | 'Belt' | 'Inserter' | 'Furnace' | 'Chest';
+export type EntityKind = 'Miner' | 'Belt' | 'Splitter' | 'Inserter' | 'Furnace' | 'Assembler' | 'Chest' | 'SolarPanel' | 'Accumulator';
 
 /**
  * Quarter-turn clockwise rotations.
@@ -53,7 +53,19 @@ export type PlacementFeedback = {
 /**
  * Canonical list of all placeable entity kinds.
  */
-export const ALL_ENTITY_KINDS: EntityKind[] = ['Miner', 'Belt', 'Inserter', 'Furnace', 'Chest'];
+export const TOOLBAR_ENTITY_ORDER: readonly EntityKind[] = [
+  'Miner',
+  'Belt',
+  'Splitter',
+  'Inserter',
+  'Furnace',
+  'Chest',
+  'Assembler',
+  'SolarPanel',
+  'Accumulator',
+];
+
+export const ALL_ENTITY_KINDS: EntityKind[] = [...TOOLBAR_ENTITY_ORDER];
 
 export type CoreActionOutcome = {
   ok?: boolean;
@@ -128,10 +140,13 @@ export interface PlacementController {
   getState(): PlacementState;
 
   /** Selects an entity kind for placement. */
-  selectKind(kind: EntityKind): void;
+  selectKind(kind: EntityKind | null): void;
 
   /** Rotates the selected placement orientation by 90 degrees clockwise. */
   rotate(): void;
+
+  /** Sets placement orientation explicitly (0..3). */
+  setRotation(rotation: Rotation): void;
 
   /** Sets or clears the cursor tile and recomputes placement validity. */
   setCursor(tile: Tile | null): void;
@@ -201,12 +216,13 @@ const PLACEMENT_FEEDBACK_BY_REASON: Readonly<Record<string, { token: PlacementFe
   tile_occupied: { token: "blocked-occupied", message: "Tile occupied" },
   out_of_bounds: { token: "blocked-out-of-bounds", message: "Out of bounds" },
   outside_bounds: { token: "blocked-out-of-bounds", message: "Out of bounds" },
-  needs_resource: { token: "blocked-resource-required", message: "Needs ore tile" },
-  requires_resource: { token: "blocked-resource-required", message: "Needs ore tile" },
-  requires_ore: { token: "blocked-resource-required", message: "Needs ore tile" },
-  no_resource: { token: "blocked-resource-required", message: "Needs ore tile" },
-  not_on_resource: { token: "blocked-resource-required", message: "Needs ore tile" },
-  invalid_miner_on_resource: { token: "blocked-resource-required", message: "Needs ore tile" },
+  needs_resource: { token: "blocked-resource-required", message: "Needs ore or tree tile" },
+  requires_resource: { token: "blocked-resource-required", message: "Needs ore or tree tile" },
+  requires_ore: { token: "blocked-resource-required", message: "Needs ore or tree tile" },
+  no_resource: { token: "blocked-resource-required", message: "Needs ore or tree tile" },
+  not_on_resource: { token: "blocked-resource-required", message: "Needs ore or tree tile" },
+  invalid_miner_on_resource: { token: "blocked-resource-required", message: "Needs ore or tree tile" },
+  no_power: { token: "blocked", message: "No power" },
   no_fuel: { token: "blocked", message: "Out of fuel" },
   no_fuel_source: { token: "blocked", message: "No fuel source" },
   fuel_full: { token: "blocked", message: "Fuel full" },
@@ -515,13 +531,18 @@ export function createPlacementController(
       };
     },
 
-    selectKind(kind: EntityKind): void {
+    selectKind(kind: EntityKind | null): void {
       state.selectedKind = kind;
       recomputeCanPlace();
     },
 
     rotate(): void {
       state.rotation = nextRotation(state.rotation);
+      recomputeCanPlace();
+    },
+
+    setRotation(rotation: Rotation): void {
+      state.rotation = rotation;
       recomputeCanPlace();
     },
 

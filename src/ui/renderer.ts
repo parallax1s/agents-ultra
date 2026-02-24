@@ -9,6 +9,7 @@
 */
 
 import { createSnapshot, type Snapshot } from "../core/snapshot";
+import { rotateDirection } from "../core/types";
 import type { Direction, EntityKind, ItemKind } from "../core/types";
 
 declare global {
@@ -24,9 +25,12 @@ const SVG_ASSET_NAMES = [
   "transport-belt-basic-yellow",
   "basic-inserter",
   "furnace",
+  "solar-panel",
   "chest",
   "iron-ore",
+  "coal",
   "player",
+  "tree",
 ] as const;
 
 const SVG_ROTATION_OFFSETS_RAD: Readonly<Record<string, number>> = {
@@ -40,7 +44,7 @@ const SVG_ROTATION_OFFSETS_RAD: Readonly<Record<string, number>> = {
   "basic-inserter": Math.PI / 2,
   "burner-inserter": Math.PI / 2,
   "fast-inserter": Math.PI / 2,
-  player: Math.PI / 2,
+  player: 0,
 };
 
 function getSvg(name: string): HTMLImageElement | null {
@@ -89,18 +93,29 @@ type Tile = { x: number; y: number };
 // Colors
 const GRID_COLOR = "#3e4a57";
 const ORE_COLOR = "#c47f2d";
+const COAL_COLOR = "#2f2f2f";
+const WOOD_COLOR = "#4d6b37";
 const GHOST_OK_FILL = "rgba(139, 233, 253, 0.18)"; // cyan-ish
 const GHOST_BAD_FILL = "rgba(255, 99, 99, 0.18)"; // red-ish
 const GHOST_STROKE_OK = "#8be9fd";
 const GHOST_STROKE_BAD = "#ff6b6b";
 const MINER_COLOR = "#66c2a5";
 const BELT_COLOR = "#8da0cb";
+const SPLITTER_COLOR = "#6dd3f7";
 const INSERTER_BASE = "#e78ac3";
 const INSERTER_ARM = "#ffb3de";
 const FURNACE_COLOR = "#fc8d62";
+const ASSEMBLER_COLOR = "#8f78ff";
+const ACCUMULATOR_COLOR = "#f8d568";
 const ITEM_ORE = "#b0792a";
 const ITEM_PLATE = "#c0c5cf";
+const ITEM_COAL = "#2f2f2f";
+const ITEM_WOOD = WOOD_COLOR;
+const ITEM_GEAR = "#c084fc";
 const ITEM_GENERIC = "#d4d4d4";
+const CONVEYOR_HINT_LOW = "#22c55e";
+const CONVEYOR_HINT_MID = "#facc15";
+const CONVEYOR_HINT_HIGH = "#ef4444";
 
 // Direction helpers
 const dirToAngleRad = (d: Direction): number => {
@@ -125,6 +140,12 @@ type Transform = {
   tileRender: number; // tileSize * scale
 };
 
+type CameraTransform = {
+  zoom: number;
+  panX: number;
+  panY: number;
+};
+
 type SnapshotWithOptionalPlayer = Snapshot & {
   player?: {
     x: number;
@@ -135,14 +156,24 @@ type SnapshotWithOptionalPlayer = Snapshot & {
   };
 };
 
-function computeTransform(canvas: HTMLCanvasElement, gridWidth: number, gridHeight: number, tileSize: number): Transform {
+function computeTransform(
+  canvas: HTMLCanvasElement,
+  gridWidth: number,
+  gridHeight: number,
+  tileSize: number,
+  camera?: CameraTransform,
+): Transform {
   const worldW = gridWidth * tileSize;
   const worldH = gridHeight * tileSize;
-  const scale = Math.max(0.0001, Math.min(canvas.width / worldW, canvas.height / worldH));
+  const baseScale = Math.max(0.0001, Math.min(canvas.width / worldW, canvas.height / worldH));
+  const zoom = typeof camera?.zoom === 'number' ? Math.max(0.05, camera.zoom) : 1;
+  const scale = baseScale * zoom;
   const viewW = worldW * scale;
   const viewH = worldH * scale;
-  const offsetX = Math.floor((canvas.width - viewW) / 2);
-  const offsetY = Math.floor((canvas.height - viewH) / 2);
+  const baseOffsetX = Math.floor((canvas.width - worldW * baseScale) / 2);
+  const baseOffsetY = Math.floor((canvas.height - worldH * baseScale) / 2);
+  const offsetX = baseOffsetX + (typeof camera?.panX === 'number' && Number.isFinite(camera.panX) ? camera.panX : 0);
+  const offsetY = baseOffsetY + (typeof camera?.panY === 'number' && Number.isFinite(camera.panY) ? camera.panY : 0);
   return { scale, offsetX, offsetY, tileRender: tileSize * scale };
 }
 
@@ -150,7 +181,7 @@ function drawGrid(ctx: CanvasRenderingContext2D, gridW: number, gridH: number, t
   ctx.save();
   ctx.translate(t.offsetX, t.offsetY);
   ctx.strokeStyle = GRID_COLOR;
-  ctx.lineWidth = Math.max(1, Math.floor(t.scale));
+  ctx.lineWidth = Math.max(0.3, t.scale * 0.06);
   // vertical lines
   for (let x = 0; x <= gridW; x += 1) {
     const px = Math.floor(x * t.tileRender) + 0.5;
@@ -180,16 +211,34 @@ function fillTile(ctx: CanvasRenderingContext2D, x: number, y: number, color: st
   );
 }
 
-function drawOre(ctx: CanvasRenderingContext2D, ore: ReadonlyArray<{ x: number; y: number }>, t: Transform): void {
+function drawResourceTiles(
+  ctx: CanvasRenderingContext2D,
+  tiles: ReadonlyArray<{ x: number; y: number }>,
+  t: Transform,
+  assetName: string,
+  fallbackColor: string,
+): void {
   const useSvgs = !!window.__USE_SVGS__;
   ctx.save();
-  for (const cell of ore) {
-    if (useSvgs && drawSvg(ctx, "iron-ore", cell.x, cell.y, "N", t, 1.0)) {
+  for (const cell of tiles) {
+    if (useSvgs && drawSvg(ctx, assetName, cell.x, cell.y, "N", t, 1.0)) {
       continue;
     }
-    fillTile(ctx, cell.x, cell.y, ORE_COLOR, t);
+    fillTile(ctx, cell.x, cell.y, fallbackColor, t);
   }
   ctx.restore();
+}
+
+function drawOre(ctx: CanvasRenderingContext2D, ore: ReadonlyArray<{ x: number; y: number }>, t: Transform): void {
+  drawResourceTiles(ctx, ore, t, "iron-ore", ORE_COLOR);
+}
+
+function drawCoal(ctx: CanvasRenderingContext2D, coal: ReadonlyArray<{ x: number; y: number }>, t: Transform): void {
+  drawResourceTiles(ctx, coal, t, "coal", COAL_COLOR);
+}
+
+function drawWood(ctx: CanvasRenderingContext2D, wood: ReadonlyArray<{ x: number; y: number }>, t: Transform): void {
+  drawResourceTiles(ctx, wood, t, "tree", WOOD_COLOR);
 }
 
 function drawGhost(ctx: CanvasRenderingContext2D, ghost: { tile: Tile | null; valid: boolean }, t: Transform): void {
@@ -214,14 +263,14 @@ function drawPlayerMarker(
   t: Transform,
   snapshot: SnapshotWithOptionalPlayer,
   timeTick: number,
+  motionEnabled: boolean,
 ): void {
-  const animate = !(typeof navigator !== "undefined" && navigator.webdriver === true);
+  const animate = motionEnabled && !(typeof navigator !== "undefined" && navigator.webdriver === true);
   const player = snapshot.player;
   const px =
     player && Number.isFinite(player.x) ? Math.max(0, Math.min(gridW - 1, Math.floor(player.x))) : Math.floor(gridW / 2);
   const py =
     player && Number.isFinite(player.y) ? Math.max(0, Math.min(gridH - 1, Math.floor(player.y))) : Math.floor(gridH / 2);
-  const rot: Direction = player?.rot ?? "S";
   const fuel = typeof player?.fuel === "number" && Number.isFinite(player.fuel) ? Math.max(0, player.fuel) : 100;
   const maxFuel =
     typeof player?.maxFuel === "number" && Number.isFinite(player.maxFuel)
@@ -230,14 +279,24 @@ function drawPlayerMarker(
   const fuelRatio = Math.max(0, Math.min(1, fuel / maxFuel));
   const bob = animate ? Math.sin(timeTick * 0.22) * t.tileRender * 0.015 : 0;
   const pulse = animate ? 1 + 0.03 * Math.sin(timeTick * 0.2 + 0.7) : 1;
-  const usedSvg = !!window.__USE_SVGS__ && drawSvg(ctx, "player", px, py, rot, t, 0.72 * pulse, bob);
+  const playerDirectionCw: Direction = "E";
+  const usedSvg = !!window.__USE_SVGS__ && drawSvg(
+    ctx,
+    "player",
+    px,
+    py,
+    playerDirectionCw,
+    t,
+    0.72 * pulse,
+    bob,
+  );
 
   const cx = t.offsetX + (px + 0.5) * t.tileRender;
   const cy = t.offsetY + (py + 0.5) * t.tileRender;
   const radius = Math.max(4, t.tileRender * 0.18);
   if (!usedSvg) {
     const heading = radius * 1.45;
-    const angle = dirToAngleRad(rot);
+    const angle = dirToAngleRad(playerDirectionCw);
 
     ctx.save();
     ctx.fillStyle = "#4fd1ff";
@@ -276,10 +335,12 @@ function drawMiner(
   rot: Direction,
   t: Transform,
   hasOutput: boolean | undefined,
+  justMined: boolean | undefined,
   timeTick: number,
+  motionEnabled: boolean,
 ): void {
-  const animate = !(typeof navigator !== "undefined" && navigator.webdriver === true);
-  const active = hasOutput === true;
+  const animate = motionEnabled && !(typeof navigator !== "undefined" && navigator.webdriver === true);
+  const active = hasOutput === true || justMined === true;
   const pulse =
     active && animate ? 1 + 0.03 * Math.sin(timeTick * 0.25 + x * 0.5 + y * 0.2) : 1;
   const bob = active && animate ? Math.sin(timeTick * 0.28 + x * 0.2) * t.tileRender * 0.01 : 0;
@@ -308,11 +369,13 @@ function drawBelt(
   itemHint: ReadonlyArray<ItemKind | null> | undefined,
   t: Transform,
   timeTick: number,
+  motionEnabled: boolean,
 ): void {
-  const animate = !(typeof navigator !== "undefined" && navigator.webdriver === true);
+  const animate = motionEnabled && !(typeof navigator !== "undefined" && navigator.webdriver === true);
   const useSvgs = !!window.__USE_SVGS__;
   const px = t.offsetX + x * t.tileRender;
   const py = t.offsetY + y * t.tileRender;
+  const laneCapacity = itemHint === undefined ? 0 : itemHint.length;
   const items = parseBeltItems(itemHint);
   const active = items.length > 0;
   const pulse =
@@ -365,7 +428,18 @@ function drawBelt(
       }
     }
 
-    const color = it.kind === "iron-ore" ? ITEM_ORE : it.kind === "iron-plate" ? ITEM_PLATE : ITEM_GENERIC;
+    const color =
+      it.kind === "iron-ore"
+        ? ITEM_ORE
+        : it.kind === "iron-plate"
+          ? ITEM_PLATE
+          : it.kind === "coal"
+            ? ITEM_COAL
+            : it.kind === "iron-gear"
+              ? ITEM_GEAR
+              : it.kind === "wood"
+                ? ITEM_WOOD
+                : ITEM_GENERIC;
     const ix = -t.tileRender * 0.25 + it.pos * (t.tileRender * 0.5);
     ctx.fillStyle = color;
     ctx.beginPath();
@@ -373,6 +447,105 @@ function drawBelt(
     ctx.fill();
   }
 
+  const load = laneCapacity > 0 ? items.length / laneCapacity : 0;
+  if (load >= 0.65) {
+    drawConveyorLoadHint(ctx, px, py, t, load);
+  }
+  ctx.restore();
+}
+
+function drawSplitter(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  rot: Direction,
+  itemHint: ReadonlyArray<ItemKind | null> | undefined,
+  t: Transform,
+  timeTick: number,
+  motionEnabled: boolean,
+): void {
+  const animate = motionEnabled && !(typeof navigator !== "undefined" && navigator.webdriver === true);
+  const px = t.offsetX + x * t.tileRender;
+  const py = t.offsetY + y * t.tileRender;
+  const items = parseBeltItems(itemHint);
+  const laneCapacity = itemHint === undefined ? 0 : itemHint.length;
+  const pulse = animate ? 1 + 0.02 * Math.sin(timeTick * 0.55 + x * 0.4 + y * 0.3) : 1;
+  const hasItem = items.length > 0;
+
+  const centerX = px + t.tileRender * 0.5;
+  const centerY = py + t.tileRender * 0.5;
+  const half = t.tileRender * 0.34;
+  const pulseScale = hasItem && animate ? pulse : 1;
+  const branchLength = t.tileRender * 0.44 * pulseScale;
+
+  ctx.save();
+  ctx.fillStyle = hasItem ? "#2f2f2f" : SPLITTER_COLOR;
+  ctx.fillRect(
+    centerX - half,
+    centerY - t.tileRender * 0.08,
+    t.tileRender * 0.68,
+    t.tileRender * 0.16,
+  );
+  ctx.save();
+  ctx.translate(centerX, centerY);
+  ctx.rotate(dirToAngleRad(rot));
+  ctx.fillStyle = SPLITTER_COLOR;
+  ctx.beginPath();
+  ctx.rect(-half, -t.tileRender * 0.04, t.tileRender * 0.65, t.tileRender * 0.08);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.strokeStyle = "rgba(240,240,240,0.7)";
+  ctx.lineWidth = Math.max(1.4, t.tileRender * 0.035);
+  ctx.beginPath();
+  ctx.moveTo(centerX, centerY);
+  ctx.lineTo(
+    centerX + Math.cos(dirToAngleRad(rotateDirection(rot, -1))) * branchLength,
+    centerY + Math.sin(dirToAngleRad(rotateDirection(rot, -1))) * branchLength,
+  );
+  ctx.moveTo(centerX, centerY);
+  ctx.lineTo(
+    centerX + Math.cos(dirToAngleRad(rotateDirection(rot, 1))) * branchLength,
+    centerY + Math.sin(dirToAngleRad(rotateDirection(rot, 1))) * branchLength,
+  );
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.fillStyle = SPLITTER_COLOR;
+  ctx.arc(centerX, centerY, t.tileRender * 0.05, 0, Math.PI * 2);
+  ctx.fill();
+
+  for (const it of items) {
+    const img = getSvg(it.kind);
+    if (img && img.complete && img.naturalWidth > 0) {
+      const iconSize = t.tileRender * 0.32;
+      const offsetY = it.kind === "coal" ? t.tileRender * 0.07 : -t.tileRender * 0.07;
+      ctx.drawImage(img, centerX - iconSize / 2, centerY + offsetY, iconSize, iconSize);
+      continue;
+    }
+
+    const color =
+      it.kind === "iron-ore"
+        ? ITEM_ORE
+        : it.kind === "iron-plate"
+          ? ITEM_PLATE
+          : it.kind === "coal"
+            ? ITEM_COAL
+            : it.kind === "iron-gear"
+              ? ITEM_GEAR
+              : it.kind === "wood"
+                ? ITEM_WOOD
+                : ITEM_GENERIC;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, Math.max(2, t.tileRender * 0.07), 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const load = laneCapacity > 0 ? items.length / laneCapacity : 0;
+  if (load >= 0.55) {
+    drawConveyorLoadHint(ctx, px, py, t, load);
+  }
   ctx.restore();
 }
 
@@ -384,8 +557,9 @@ function drawInserter(
   state: InserterState | undefined,
   t: Transform,
   timeTick: number,
+  motionEnabled: boolean,
 ): void {
-  const animate = !(typeof navigator !== "undefined" && navigator.webdriver === true);
+  const animate = motionEnabled && !(typeof navigator !== "undefined" && navigator.webdriver === true);
   const active = state !== undefined && state !== "idle";
   const pulse =
     active && animate ? 1 + 0.025 * Math.sin(timeTick * 0.5 + x * 0.4 + y * 0.4) : 1;
@@ -402,7 +576,7 @@ function drawInserter(
   ctx.fill();
 
   // arm rotation: parse from state; fallback to time-based sweep
-  const phase = parseInserterPhase(state, timeTick);
+  const phase = parseInserterPhase(state, timeTick, animate);
   const angle = dirToAngleRad(rot) + (phase - 0.5) * Math.PI * 0.75; // +/- 67.5deg around facing
   const armLen = t.tileRender * 0.42;
 
@@ -423,8 +597,9 @@ function drawFurnace(
   progress: number | null,
   t: Transform,
   timeTick: number,
+  motionEnabled: boolean,
 ): void {
-  const animate = !(typeof navigator !== "undefined" && navigator.webdriver === true);
+  const animate = motionEnabled && !(typeof navigator !== "undefined" && navigator.webdriver === true);
   const useSvgs = !!window.__USE_SVGS__;
   const px = t.offsetX + x * t.tileRender;
   const py = t.offsetY + y * t.tileRender;
@@ -453,6 +628,80 @@ function drawFurnace(
     ctx.fillStyle = frac > 0 ? "#ffe082" : "#444";
     ctx.fillRect(px + 3, py + Math.ceil(t.tileRender) - barH - 3, barW, barH);
   }
+  ctx.restore();
+}
+
+function drawAssembler(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  progress: number | null,
+  t: Transform,
+  timeTick: number,
+  motionEnabled: boolean,
+): void {
+  const animate = motionEnabled && !(typeof navigator !== "undefined" && navigator.webdriver === true);
+  const useSvgs = !!window.__USE_SVGS__;
+  const px = t.offsetX + x * t.tileRender;
+  const py = t.offsetY + y * t.tileRender;
+  const frac = progress !== null ? clamp01(progress) : 0;
+  const active = frac > 0;
+  const pulse =
+    active && animate ? 1 + 0.02 * Math.sin(timeTick * 0.2 + x * 0.3 + y * 0.3) : 1;
+  const bob =
+    active && animate
+      ? Math.sin(timeTick * 0.18 + x * 0.2 + y * 0.2) * t.tileRender * 0.006
+      : 0;
+
+  if (
+    !useSvgs ||
+    !drawSvg(ctx, "furnace", x, y, "N", t, pulse, bob)
+  ) {
+    const tile = Math.ceil(t.tileRender);
+    const pad = Math.max(2, tile * 0.09);
+    const body = tile - pad * 2;
+    const topInset = pad + tile * 0.12;
+    const midInset = pad + tile * 0.22;
+
+    ctx.save();
+    ctx.fillStyle = ASSEMBLER_COLOR;
+    ctx.fillRect(px + pad, py + pad, body, body);
+
+    ctx.fillStyle = active ? "rgba(255, 255, 255, 0.5)" : "rgba(255, 255, 255, 0.2)";
+    ctx.fillRect(px + topInset, py + topInset, body - (topInset - pad) * 2, tile * 0.16);
+
+    ctx.fillStyle = "rgba(0, 0, 0, 0.22)";
+    ctx.fillRect(px + midInset, py + midInset, body - (midInset - pad) * 2, tile * 0.16);
+
+    ctx.fillStyle = active ? "#ffd56b" : "rgba(255, 213, 107, 0.55)";
+    const barHeight = Math.max(2, tile * 0.06);
+    const fillHeight = Math.max(3, Math.ceil(body * 0.6) * frac);
+    ctx.fillRect(
+      px + tile * 0.34,
+      py + tile * 0.82 - fillHeight,
+      tile * 0.1,
+      fillHeight,
+    );
+    ctx.restore();
+  }
+
+  ctx.save();
+  if (frac > 0 || !useSvgs) {
+    const barW = (Math.ceil(t.tileRender) - 6) * frac;
+    const barH = Math.max(3, Math.floor(t.tileRender * 0.12));
+    ctx.fillStyle = frac > 0 ? "#ffe082" : "#444";
+    ctx.fillRect(px + 3, py + Math.ceil(t.tileRender) - barH - 3, barW, barH);
+  }
+
+  ctx.fillStyle = active ? "#6bffd2" : "rgba(107, 255, 210, 0.42)";
+  ctx.beginPath();
+  ctx.arc(px + t.tileRender * 0.18, py + t.tileRender * 0.5, Math.max(1.6, t.tileRender * 0.06), 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = active ? "#bcaeff" : "rgba(188, 174, 255, 0.42)";
+  ctx.beginPath();
+  ctx.arc(px + t.tileRender * 0.82, py + t.tileRender * 0.5, Math.max(1.6, t.tileRender * 0.06), 0, Math.PI * 2);
+  ctx.fill();
   ctx.restore();
 }
 
@@ -531,6 +780,52 @@ function drawChest(
   }
 }
 
+function drawAccumulator(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  t: Transform,
+): void {
+  const px = t.offsetX + x * t.tileRender;
+  const py = t.offsetY + y * t.tileRender;
+  const tile = Math.ceil(t.tileRender);
+  const baseW = t.tileRender * 0.6;
+  const baseH = t.tileRender * 0.2;
+  const baseX = px + (t.tileRender - baseW) / 2;
+  const baseY = py + t.tileRender * 0.72;
+  const bodyW = t.tileRender * 0.32;
+  const bodyH = t.tileRender * 0.38;
+  const bodyX = px + (t.tileRender - bodyW) / 2;
+  const bodyY = py + t.tileRender * 0.24;
+  const capX = px + t.tileRender * 0.23;
+  const capY = py + t.tileRender * 0.16;
+  const capW = t.tileRender * 0.54;
+  const capH = t.tileRender * 0.18;
+  const indicatorX = px + t.tileRender * 0.5;
+  const indicatorY = py + t.tileRender * 0.68;
+  const radius = Math.max(1.4, tile * 0.035);
+
+  ctx.save();
+  ctx.fillStyle = "rgba(12, 14, 18, 0.72)";
+  ctx.fillRect(baseX, baseY, baseW, baseH);
+  ctx.fillStyle = "#0f161d";
+  ctx.fillRect(capX, capY, capW, capH);
+
+  ctx.fillStyle = ACCUMULATOR_COLOR;
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.28)";
+  ctx.lineWidth = Math.max(1, t.tileRender * 0.035);
+  ctx.fillRect(bodyX, bodyY, bodyW, bodyH);
+  ctx.strokeRect(bodyX, bodyY, bodyW, bodyH);
+
+  ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
+  ctx.beginPath();
+  ctx.arc(indicatorX - t.tileRender * 0.08, indicatorY, radius * 1.1, 0, Math.PI * 2);
+  ctx.arc(indicatorX + t.tileRender * 0.08, indicatorY, radius * 1.1, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
 function clamp01(n: number): number {
   if (!Number.isFinite(n)) return 0;
   if (n < 0) return 0;
@@ -545,6 +840,32 @@ type BeltItem = {
   pos: number;
 };
 
+const drawConveyorLoadHint = (
+  ctx: CanvasRenderingContext2D,
+  px: number,
+  py: number,
+  t: Transform,
+  load: number,
+): void => {
+  if (!Number.isFinite(load) || load <= 0.01) {
+    return;
+  }
+
+  const laneWidth = Math.max(3, t.tileRender * 0.28);
+  const laneX = px + (t.tileRender - laneWidth) / 2;
+  const laneY = py + t.tileRender * 0.11;
+  const laneHeight = Math.max(2.2, t.tileRender * 0.08);
+  const clamped = Math.min(1, Math.max(0, load));
+  const color = clamped >= 0.85 ? CONVEYOR_HINT_HIGH : clamped >= 0.55 ? CONVEYOR_HINT_MID : CONVEYOR_HINT_LOW;
+
+  ctx.save();
+  ctx.fillStyle = "rgba(30, 41, 59, 0.6)";
+  ctx.fillRect(laneX, laneY, laneWidth, laneHeight);
+  ctx.fillStyle = color;
+  ctx.fillRect(laneX, laneY, laneWidth * clamped, laneHeight);
+  ctx.restore();
+};
+
 function parseBeltItems(items: ReadonlyArray<ItemKind | null> | undefined): BeltItem[] {
   if (items === undefined) {
     return [];
@@ -555,7 +876,13 @@ function parseBeltItems(items: ReadonlyArray<ItemKind | null> | undefined): Belt
 
   for (let index = 0; index < items.length; index += 1) {
     const itemKind = items[index];
-    if (itemKind !== "iron-ore" && itemKind !== "iron-plate") {
+    if (
+      itemKind !== "iron-ore" &&
+      itemKind !== "iron-plate" &&
+      itemKind !== "coal" &&
+      itemKind !== "iron-gear" &&
+      itemKind !== "wood"
+    ) {
       continue;
     }
 
@@ -568,9 +895,9 @@ function parseBeltItems(items: ReadonlyArray<ItemKind | null> | undefined): Belt
   return result;
 }
 
-function parseInserterPhase(state: InserterState | undefined, tick: number): number {
+function parseInserterPhase(state: InserterState | undefined, tick: number, motionEnabled: boolean): number {
   const base = state === "pickup" ? 0.2 : state === "swing" ? 0.5 : state === "drop" ? 0.8 : 0.15;
-  const sweep = ((tick % 20) / 20 - 0.5) * 0.12;
+  const sweep = motionEnabled ? ((tick % 20) / 20 - 0.5) * 0.12 : 0;
   return clamp01(base + sweep);
 }
 
@@ -583,6 +910,9 @@ function parseFurnaceProgress(progress01: number | undefined): number | null {
 
 type RendererApi = {
   setGhost(tile: Tile | null, valid: boolean): void;
+  setPaused(paused: boolean): void;
+  setReducedMotionEnabled(enabled: boolean): void;
+  requestRender(): void;
   resize?(width: number, height: number): void;
   destroy(): void;
 };
@@ -600,15 +930,21 @@ const toBoundaryCounter = (value: unknown): number | null => {
   return Math.floor(value);
 };
 
-const readPlacementTick = (sim: unknown): number | null => {
+type PlacementTiming = {
+  tick: number | null;
+  revision: number | null;
+};
+
+const readPlacementTiming = (sim: unknown): PlacementTiming => {
   if (sim === null || typeof sim !== "object") {
-    return null;
+    return { tick: null, revision: null };
   }
 
   const withSnapshot = sim as {
     getPlacementSnapshot?: () => {
       tick?: unknown;
       tickCount?: unknown;
+      revision?: unknown;
     };
     tick?: unknown;
     tickCount?: unknown;
@@ -619,13 +955,24 @@ const readPlacementTick = (sim: unknown): number | null => {
       const placementSnapshot = withSnapshot.getPlacementSnapshot();
       const fromTick = toBoundaryCounter(placementSnapshot?.tick);
       if (fromTick !== null) {
-        return fromTick;
+        return {
+          tick: fromTick,
+          revision: toBoundaryCounter(placementSnapshot?.revision),
+        };
       }
 
       const fromTickCount = toBoundaryCounter(placementSnapshot?.tickCount);
       if (fromTickCount !== null) {
-        return fromTickCount;
+        return {
+          tick: fromTickCount,
+          revision: toBoundaryCounter(placementSnapshot?.revision),
+        };
       }
+
+      return {
+        tick: null,
+        revision: toBoundaryCounter(placementSnapshot?.revision),
+      };
     } catch {
       // Ignore and fall back to legacy fields below.
     }
@@ -633,10 +980,16 @@ const readPlacementTick = (sim: unknown): number | null => {
 
   const fromTick = toBoundaryCounter(withSnapshot.tick);
   if (fromTick !== null) {
-    return fromTick;
+    return {
+      tick: fromTick,
+      revision: toBoundaryCounter((withSnapshot as { revision?: unknown }).revision),
+    };
   }
 
-  return toBoundaryCounter(withSnapshot.tickCount);
+  return {
+    tick: toBoundaryCounter(withSnapshot.tickCount),
+    revision: toBoundaryCounter((withSnapshot as { revision?: unknown }).revision),
+  };
 };
 
 export function createRenderer(canvas: HTMLCanvasElement): RendererApi {
@@ -649,9 +1002,20 @@ export function createRenderer(canvas: HTMLCanvasElement): RendererApi {
 
   let ghost: { tile: Tile | null; valid: boolean } = { tile: null, valid: false };
   let committedTick: number | null = null;
+  let committedRevision: number | null = null;
   let committedSnapshot: Snapshot | null = null;
+  let lastRenderedTick: number | null = null;
+  let lastRenderedRevision: number | null = null;
+  let lastRenderedGhostSignature = "null";
+  let lastRenderedPaused = false;
+  let lastRenderedSvgs = !!window.__USE_SVGS__;
+  let reducedMotionEnabled = false;
+  let lastRenderedReducedMotion = false;
   let rafId: number | null = null;
+  let renderQueued = false;
   let destroyed = false;
+  let isPaused = false;
+  let camera: CameraTransform = { zoom: 1, panX: 0, panY: 0 };
 
   const readSnapshot = (): Snapshot | null => {
     const sim = window.__SIM__;
@@ -661,33 +1025,39 @@ export function createRenderer(canvas: HTMLCanvasElement): RendererApi {
       return null;
     }
 
-    const nextTick = readPlacementTick(sim);
-    if (nextTick === null) {
+    const { tick: nextTick, revision: nextRevision } = readPlacementTiming(sim);
+    const nextRevisionValue = nextRevision === null ? 0 : nextRevision;
+    if (nextTick === null && nextRevision === null) {
       try {
         const snapshot = createSnapshot(sim);
         const snapshotTick = toBoundaryCounter(snapshot.time.tick);
-        if (committedSnapshot !== null && committedTick === snapshotTick) {
+        const snapshotRevision = toBoundaryCounter(snapshot.time.revision);
+        if (committedSnapshot !== null && committedTick === snapshotTick && committedRevision === snapshotRevision) {
           return committedSnapshot;
         }
         committedSnapshot = snapshot;
         committedTick = snapshotTick;
+        committedRevision = snapshotRevision;
         return snapshot;
       } catch {
         return null;
       }
     }
 
-    if (committedSnapshot !== null && committedTick === nextTick) {
+    if (committedSnapshot !== null && committedTick === nextTick && committedRevision === nextRevisionValue) {
       return committedSnapshot;
     }
 
     try {
       const snapshot = createSnapshot(sim);
+      const snapshotTick = toBoundaryCounter(snapshot.time.tick);
+      const snapshotRevision = toBoundaryCounter(snapshot.time.revision);
       committedSnapshot = snapshot;
-      committedTick = nextTick;
+      committedTick = snapshotTick;
+      committedRevision = snapshotRevision === null ? nextRevisionValue : snapshotRevision;
       return snapshot;
     } catch {
-      if (committedSnapshot !== null && committedTick === nextTick) {
+      if (committedSnapshot !== null && committedTick === nextTick && committedRevision === nextRevisionValue) {
         return committedSnapshot;
       }
       return null;
@@ -699,9 +1069,28 @@ export function createRenderer(canvas: HTMLCanvasElement): RendererApi {
 
     const snapshot = readSnapshot();
     if (snapshot === null) {
-      // If snapshot fails (e.g., no sim present yet), clear and request next frame
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      scheduleNext();
+      return;
+    }
+
+    const snapshotTick = toBoundaryCounter(snapshot.time.tick);
+    const snapshotRevision = toBoundaryCounter(snapshot.time.revision);
+    const ghostSignature = ghost.tile === null
+      ? "null"
+      : `${ghost.tile.x},${ghost.tile.y}:${ghost.valid ? 1 : 0}`;
+    const nextSvgs = !!window.__USE_SVGS__;
+    const motionEnabled = !reducedMotionEnabled && !(typeof navigator !== "undefined" && navigator.webdriver === true);
+
+    if (
+      snapshotTick !== null &&
+      snapshotRevision !== null &&
+      snapshotTick === lastRenderedTick &&
+      snapshotRevision === lastRenderedRevision &&
+      ghostSignature === lastRenderedGhostSignature &&
+      isPaused === lastRenderedPaused &&
+      lastRenderedSvgs === nextSvgs &&
+      lastRenderedReducedMotion === reducedMotionEnabled
+    ) {
       return;
     }
 
@@ -712,65 +1101,121 @@ export function createRenderer(canvas: HTMLCanvasElement): RendererApi {
     const gridH = snapshot.grid.height;
     const tile = snapshot.grid.tileSize;
     if (gridW <= 0 || gridH <= 0) {
-      scheduleNext();
+      // No valid world dimensions yet; render on next update.
       return;
     }
 
-    const t = computeTransform(canvas, gridW, gridH, tile);
+    const t = computeTransform(canvas, gridW, gridH, tile, camera);
 
     // Layers
     drawGrid(ctx, gridW, gridH, tile, t);
     drawOre(ctx, snapshot.ore, t);
+    drawCoal(ctx, snapshot.coal, t);
+    drawWood(ctx, snapshot.wood, t);
 
     // Entities
     for (const e of snapshot.entities) {
       switch (e.kind as EntityKind) {
         case "miner":
-          drawMiner(ctx, e.pos.x, e.pos.y, e.rot, t, e.hasOutput, snapshot.time.tick);
+          drawMiner(ctx, e.pos.x, e.pos.y, e.rot, t, e.hasOutput, e.justMined, snapshot.time.tick, motionEnabled);
           break;
         case "belt":
-          drawBelt(ctx, e.pos.x, e.pos.y, e.rot, e.items, t, snapshot.time.tick);
+          drawBelt(ctx, e.pos.x, e.pos.y, e.rot, e.items, t, snapshot.time.tick, motionEnabled);
+          break;
+        case "splitter":
+          drawSplitter(ctx, e.pos.x, e.pos.y, e.rot, e.items, t, snapshot.time.tick, motionEnabled);
           break;
         case "inserter":
-          drawInserter(ctx, e.pos.x, e.pos.y, e.rot, e.state, t, snapshot.time.tick);
+          drawInserter(ctx, e.pos.x, e.pos.y, e.rot, e.state, t, snapshot.time.tick, motionEnabled);
           break;
         case "furnace": {
           const progress = parseFurnaceProgress(e.progress01);
-          drawFurnace(ctx, e.pos.x, e.pos.y, progress, t, snapshot.time.tick);
+          drawFurnace(ctx, e.pos.x, e.pos.y, progress, t, snapshot.time.tick, motionEnabled);
           break;
         }
         case "chest":
           drawChest(ctx, e.pos.x, e.pos.y, t);
           break;
-        default:
-          // resource/unknown: skip
-          break;
+      case "assembler": {
+        const progress = parseFurnaceProgress(e.progress01);
+        drawAssembler(ctx, e.pos.x, e.pos.y, progress, t, snapshot.time.tick, motionEnabled);
+        break;
+      }
+      case "solar-panel":
+        drawSvg(ctx, "solar-panel", e.pos.x, e.pos.y, "N", t, 0.95);
+        break;
+      case "accumulator":
+        drawAccumulator(ctx, e.pos.x, e.pos.y, t);
+        break;
+      default:
+        // resource/unknown: skip
+        break;
       }
     }
 
     const snapshotWithPlayer = snapshot as SnapshotWithOptionalPlayer;
-    drawPlayerMarker(ctx, gridW, gridH, t, snapshotWithPlayer, snapshot.time.tick);
+    drawPlayerMarker(ctx, gridW, gridH, t, snapshotWithPlayer, snapshot.time.tick, motionEnabled);
 
     // Ghost highlight on top
     drawGhost(ctx, ghost, t);
-
-    scheduleNext();
+    committedTick = snapshot.time.tick;
+    lastRenderedTick = snapshotTick;
+    lastRenderedRevision = snapshotRevision;
+    lastRenderedGhostSignature = ghostSignature;
+    lastRenderedPaused = isPaused;
+    lastRenderedSvgs = nextSvgs;
+    lastRenderedReducedMotion = reducedMotionEnabled;
   };
 
-  const scheduleNext = (): void => {
-    if (destroyed) return;
-    rafId = window.requestAnimationFrame(draw);
+  const requestRender = (): void => {
+    if (destroyed || renderQueued) {
+      return;
+    }
+    renderQueued = true;
+    rafId = window.requestAnimationFrame((): void => {
+      renderQueued = false;
+      draw();
+    });
   };
 
   // Kick off loop
-  scheduleNext();
+  requestRender();
 
   return {
     setGhost(tile: Tile | null, valid: boolean): void {
       ghost = { tile, valid };
+      requestRender();
+    },
+    setPaused(paused: boolean): void {
+      isPaused = paused;
+      requestRender();
+    },
+    setReducedMotionEnabled(enabled: boolean): void {
+      reducedMotionEnabled = !!enabled;
+      requestRender();
+    },
+    setCamera(nextCamera: CameraTransform): void {
+      const nextZoom = typeof nextCamera.zoom === 'number' && Number.isFinite(nextCamera.zoom)
+        ? Math.max(0.05, nextCamera.zoom)
+        : camera.zoom;
+      const nextPanX = typeof nextCamera.panX === 'number' && Number.isFinite(nextCamera.panX)
+        ? nextCamera.panX
+        : camera.panX;
+      const nextPanY = typeof nextCamera.panY === 'number' && Number.isFinite(nextCamera.panY)
+        ? nextCamera.panY
+        : camera.panY;
+      camera = {
+        zoom: nextZoom,
+        panX: nextPanX,
+        panY: nextPanY,
+      };
+      requestRender();
+    },
+    requestRender(): void {
+      requestRender();
     },
     resize(): void {
-      // Nothing to do here; draw() reads canvas size each frame.
+      requestRender();
     },
     destroy(): void {
       destroyed = true;
