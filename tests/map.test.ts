@@ -26,6 +26,10 @@ function tileKey(tile: Tile): string {
   return `${tile.x},${tile.y}`;
 }
 
+const isMineableResource = (map: ReturnType<typeof createMap>, x: number, y: number): boolean => {
+  return map.isOre(x, y) || map.isTree(x, y);
+};
+
 type PlacementFixture = {
   map: ReturnType<typeof createMap>;
   sim: Simulation;
@@ -69,7 +73,7 @@ function createPlacementFixture(seed: number | string = 1337, width = 20, height
       return "occupied";
     }
 
-    if (kind === "Miner" && !map.isOre(tile.x, tile.y)) {
+    if (kind === "Miner" && !isMineableResource(map, tile.x, tile.y)) {
       return "invalid-miner-on-resource";
     }
 
@@ -86,7 +90,7 @@ function createPlacementFixture(seed: number | string = 1337, width = 20, height
     }
 
     if (!occupied.has(tileKey(tile))) {
-      if (map.isOre(tile.x, tile.y)) {
+      if (isMineableResource(map, tile.x, tile.y)) {
         return "non-removable-resource";
       }
       return "empty";
@@ -127,7 +131,7 @@ function createPlacementFixture(seed: number | string = 1337, width = 20, height
       return resolveRemovalReason(tile) === "ok";
     },
     hasEntityAt: isOccupied,
-    isResourceTile: (tile) => map.isOre(tile.x, tile.y),
+    isResourceTile: (tile) => isMineableResource(map, tile.x, tile.y),
   };
 
   return {
@@ -171,7 +175,7 @@ function createMapBackedPlacementFixture(seed: number | string = 1337, width = 2
         return false;
       }
 
-      if (kind === "Miner" && !map.isOre(tile.x, tile.y)) {
+      if (kind === "Miner" && !isMineableResource(map, tile.x, tile.y)) {
         return false;
       }
 
@@ -196,7 +200,7 @@ function createMapBackedPlacementFixture(seed: number | string = 1337, width = 2
       return map.hasEntityAt(tile);
     },
     isResourceTile(tile) {
-      return map.isOre(tile.x, tile.y);
+      return isMineableResource(map, tile.x, tile.y);
     },
   };
 
@@ -214,6 +218,60 @@ describe("createMap", () => {
     const first = snapshotTiles(64, 64, 1337);
     const second = snapshotTiles(64, 64, 7331);
     expect(first).not.toBe(second);
+  });
+
+  it("produces both iron and coal resource patches for seeded maps", () => {
+    let sawIronOre = false;
+    let sawCoalOre = false;
+
+    for (const seed of [111, 333, 555, 777, 999]) {
+      const map = createMap(64, 64, seed);
+
+      for (let y = 0; y < 64; y += 1) {
+        for (let x = 0; x < 64; x += 1) {
+          if (!map.isOre(x, y)) {
+            continue;
+          }
+
+          const tile = map.getTile(x, y);
+          expect(tile === "iron-ore" || tile === "coal-ore").toBe(true);
+
+          if (tile === "iron-ore") {
+            sawIronOre = true;
+          }
+          if (tile === "coal-ore") {
+            sawCoalOre = true;
+          }
+        }
+      }
+    }
+
+    expect(sawIronOre).toBe(true);
+    expect(sawCoalOre).toBe(true);
+  });
+
+  it("classifies coal-ore tiles separately from iron-ore tiles", () => {
+    const width = 64;
+    const height = 64;
+    const map = createMap(width, height, 1337);
+
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        if (!map.isOre(x, y)) {
+          expect(map.isCoal(x, y)).toBe(false);
+          continue;
+        }
+
+        const tile = map.getTile(x, y);
+        expect(tile === "iron-ore" || tile === "coal-ore").toBe(true);
+
+        if (tile === "coal-ore") {
+          expect(map.isCoal(x, y)).toBe(true);
+        } else {
+          expect(map.isCoal(x, y)).toBe(false);
+        }
+      }
+    }
   });
 
   it("keeps the center spawn area ore-free (at least 10x10)", () => {
@@ -291,6 +349,65 @@ describe("createMap", () => {
       removedKind: "belt",
       tile: emptyTile,
     });
+  });
+
+  it("depletes ore and coal tiles incrementally across multiple consume calls", () => {
+    const map = createMap(32, 32, 1337);
+    const mineableTile = firstTile(map, 32, 32, (x, y) => map.isOre(x, y));
+    const consumeResource = map.consumeResource;
+    expect(consumeResource).toBeDefined();
+    expect(map.isOre(mineableTile.x, mineableTile.y)).toBe(true);
+    expect(consumeResource?.(mineableTile.x, mineableTile.y)).toBe(true);
+
+    expect(map.isOre(mineableTile.x, mineableTile.y)).toBe(true);
+
+    let attempts = 1;
+    while (consumeResource?.(mineableTile.x, mineableTile.y) === true) {
+      attempts += 1;
+    }
+
+    expect(attempts).toBeGreaterThan(1);
+    expect(map.isOre(mineableTile.x, mineableTile.y)).toBe(false);
+    expect(consumeResource?.(mineableTile.x, mineableTile.y)).toBe(false);
+  });
+
+  it("reduces ore and coal resource amounts by exactly one per consume call", () => {
+    const map = createMap(32, 32, 1337);
+    const mineableTile = firstTile(map, 32, 32, (x, y) => map.isOre(x, y));
+    const consumeResource = map.consumeResource;
+    const readAmount = typeof map.getResourceAmountAt === "function" ? map.getResourceAmountAt : null;
+    expect(consumeResource).toBeDefined();
+    expect(readAmount).not.toBeNull();
+    expect(map.isOre(mineableTile.x, mineableTile.y)).toBe(true);
+
+    const initialAmount = readAmount?.(mineableTile.x, mineableTile.y);
+    expect(initialAmount).toBeGreaterThan(1);
+
+    const outcome = consumeResource?.(mineableTile.x, mineableTile.y);
+    expect(outcome).toBe(true);
+
+    const nextAmount = readAmount?.(mineableTile.x, mineableTile.y);
+    expect(nextAmount).toBe(initialAmount - 1);
+  });
+
+  it("depletes tree tiles incrementally across multiple consume calls", () => {
+    const map = createMap(32, 32, 1337);
+    const treeTile = firstTile(map, 32, 32, (x, y) => map.isTree(x, y));
+    const consumeResource = map.consumeResource;
+    expect(consumeResource).toBeDefined();
+    expect(map.isTree(treeTile.x, treeTile.y)).toBe(true);
+    expect(consumeResource?.(treeTile.x, treeTile.y)).toBe(true);
+
+    expect(map.isTree(treeTile.x, treeTile.y)).toBe(true);
+
+    let attempts = 1;
+    while (consumeResource?.(treeTile.x, treeTile.y) === true) {
+      attempts += 1;
+    }
+
+    expect(attempts).toBeGreaterThan(1);
+    expect(map.isTree(treeTile.x, treeTile.y)).toBe(false);
+    expect(consumeResource?.(treeTile.x, treeTile.y)).toBe(false);
   });
 });
 

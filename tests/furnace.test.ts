@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
 import { Furnace } from '../src/entities/furnace';
-import { FURNACE_INPUT_ITEM, FURNACE_OUTPUT_ITEM } from '../src/core/types';
+import { FURNACE_FUEL_ITEM, FURNACE_INPUT_ITEM, FURNACE_OUTPUT_ITEM } from '../src/core/types';
 import { CANONICAL_TICK_PHASES } from '../src/core/registry';
 
 const FURNACE_SMELT_TICKS = 180;
 
-const startCraft = (furnace: Furnace): void => {
+const startCraft = (furnace: Furnace, withFuel = true): void => {
+  if (withFuel) {
+    expect(furnace.acceptItem(FURNACE_FUEL_ITEM)).toBe(true);
+  }
+
   expect(furnace.acceptItem(FURNACE_INPUT_ITEM)).toBe(true);
   furnace.update(0);
 };
@@ -229,6 +233,30 @@ describe('Furnace', () => {
     expect(first.secondProvide).toBe(FURNACE_OUTPUT_ITEM);
   });
 
+  it('accepts wood as alternative furnace fuel', () => {
+    const furnace = new Furnace();
+    expect(furnace.canAcceptItem('wood')).toBe(true);
+
+    expect(furnace.acceptItem('wood')).toBe(true);
+    expect(furnace.canAcceptItem('wood')).toBe(false);
+    expect(furnace.canProvideItem('wood')).toBe(true);
+
+    expect(furnace.acceptItem(FURNACE_INPUT_ITEM)).toBe(true);
+    furnace.update(0);
+    expect(furnace.canProvideItem('iron-plate')).toBe(false);
+
+    const advanceTo = (target: number): void => {
+      for (let i = 0; i < target; i += 1) {
+        furnace.update(0);
+      }
+    };
+
+    expect(furnace.canProvideItem('iron-plate')).toBe(false);
+    advanceTo(FURNACE_SMELT_TICKS + 1);
+    expect(furnace.canProvideItem('iron-plate')).toBe(true);
+    expect(furnace.canAcceptItem(FURNACE_OUTPUT_ITEM)).toBe(false);
+  });
+
   it('holds blocked output deterministically, then resumes only after extraction at the next boundary', () => {
     const furnace = new Furnace();
     let tick = 0;
@@ -308,6 +336,7 @@ describe('Furnace', () => {
     expect(furnace.canProvideItem(FURNACE_OUTPUT_ITEM)).toBe(false);
     expect(furnace.provideItem(FURNACE_OUTPUT_ITEM)).toBeNull();
 
+    expect(furnace.acceptItem(FURNACE_FUEL_ITEM)).toBe(true);
     expect(furnace.acceptItem(FURNACE_INPUT_ITEM)).toBe(true);
     furnace.update(0);
     runTicks(furnace, FURNACE_SMELT_TICKS - 1);
@@ -319,10 +348,15 @@ describe('Furnace', () => {
     expect(furnace.provideItem(FURNACE_OUTPUT_ITEM)).toBe(FURNACE_OUTPUT_ITEM);
   });
 
-  it('smelts ore to plate after 180 ticks without any fuel gate', () => {
+  it('does not smelt without fuel and starts once coal is added', () => {
     const furnace = new Furnace();
 
     expect(furnace.acceptItem('iron-ore')).toBe(true);
+    furnace.update(0);
+    runTicks(furnace, FURNACE_SMELT_TICKS);
+    expect(furnace.canProvideItem('iron-plate')).toBe(false);
+
+    expect(furnace.acceptItem('coal')).toBe(true);
     furnace.update(0);
     runTicks(furnace, FURNACE_SMELT_TICKS - 1);
     expect(furnace.canProvideItem('iron-plate')).toBe(false);
@@ -330,6 +364,26 @@ describe('Furnace', () => {
     runTicks(furnace, 1);
     expect(furnace.canProvideItem('iron-plate')).toBe(true);
     expect(furnace.provideItem('iron-plate')).toBe('iron-plate');
+  });
+
+  it('stores only one unit of fuel before starting a craft', () => {
+    const furnace = new Furnace();
+
+    expect(furnace.acceptItem('coal')).toBe(true);
+    expect(furnace.canAcceptItem('coal')).toBe(false);
+    expect(furnace.acceptItem('coal')).toBe(false);
+
+    expect(furnace.acceptItem('iron-ore')).toBe(true);
+    furnace.update(0);
+
+    expect(furnace.canAcceptItem('coal')).toBe(true);
+    expect(furnace.canAcceptItem('iron-ore')).toBe(false);
+    runTicks(furnace, FURNACE_SMELT_TICKS + 1);
+    expect(furnace.canProvideItem('iron-plate')).toBe(true);
+    expect(furnace.canAcceptItem('coal')).toBe(true);
+
+    expect(furnace.provideItem('iron-plate')).toBe('iron-plate');
+    expect(furnace.canAcceptItem('coal')).toBe(true);
   });
 
   it('advances to output only on exact furnace boundary ticks for repeated cycles', () => {
@@ -356,5 +410,30 @@ describe('Furnace', () => {
     expect(furnace.canProvideItem('iron-plate')).toBe(true);
     expect(furnace.canAcceptItem('iron-ore')).toBe(false);
     expect(furnace.provideItem('iron-plate')).toBe('iron-plate');
+  });
+
+  it('provides stored coal as a pickup item when furnace is idle', () => {
+    const furnace = new Furnace();
+
+    expect(furnace.canProvideItem('coal')).toBe(false);
+    expect(furnace.acceptItem(FURNACE_FUEL_ITEM)).toBe(true);
+    expect(furnace.canProvideItem('coal')).toBe(true);
+
+    expect(furnace.provideItem(FURNACE_FUEL_ITEM)).toBe(FURNACE_FUEL_ITEM);
+    expect(furnace.canProvideItem('coal')).toBe(false);
+    expect(furnace.storage).toBe(0);
+  });
+
+  it('does not provide fuel while smelting is in progress', () => {
+    const furnace = new Furnace();
+
+    expect(furnace.acceptItem(FURNACE_FUEL_ITEM)).toBe(true);
+    expect(furnace.acceptItem(FURNACE_INPUT_ITEM)).toBe(true);
+    furnace.update(0);
+
+    expect(furnace.canProvideItem('coal')).toBe(false);
+    runTicks(furnace, FURNACE_SMELT_TICKS + 1);
+    expect(furnace.canProvideItem('coal')).toBe(false);
+    expect(furnace.canProvideItem('iron-plate')).toBe(true);
   });
 });

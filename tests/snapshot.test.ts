@@ -47,7 +47,7 @@ const asSnapshotBeltState = (value: unknown): SnapshotBeltState | undefined => {
   const typedItems = maybeState.items as Array<unknown>;
   for (let i = 0; i < typedItems.length; i += 1) {
     const item = typedItems[i];
-    if (item !== "iron-ore" && item !== "iron-plate") {
+    if (item !== "iron-ore" && item !== "iron-plate" && item !== "coal") {
       typedItems[i] = null;
     }
   }
@@ -832,10 +832,15 @@ describe("createSnapshot", () => {
     });
 
     const expectedOre: Array<{ readonly x: number; readonly y: number }> = [];
+    const expectedCoal: Array<{ readonly x: number; readonly y: number }> = [];
     for (let y = 0; y < height; y += 1) {
       for (let x = 0; x < width; x += 1) {
         if (map.isOre(x, y)) {
           expectedOre.push({ x, y });
+        }
+
+        if (map.isCoal(x, y)) {
+          expectedCoal.push({ x, y });
         }
       }
     }
@@ -843,7 +848,9 @@ describe("createSnapshot", () => {
     expect(snapshot.grid.width).toBe(width);
     expect(snapshot.grid.height).toBe(height);
     expect(snapshot.ore).toEqual(expectedOre);
+    expect(snapshot.coal).toEqual(expectedCoal);
     expect(snapshot.ore).toEqual(snapshotCopy.ore);
+    expect(snapshot.coal).toEqual(snapshotCopy.coal);
     expect(snapshot.entities).toHaveLength(0);
   });
 });

@@ -1727,4 +1727,831 @@ describe("simulation registry and loop", () => {
 
     controller.destroy();
   });
+
+  test("does not consume power for blocked miner outputs", () => {
+    const sim = createSim({ width: 12, height: 12, seed: 123 });
+    const simMap = (sim as { getMap?: () => unknown }).getMap?.();
+    if (typeof simMap !== "object" || simMap === null || typeof (simMap as { isOre?: unknown }).isOre !== "function") {
+      throw new Error("Expected generated map with ore access");
+    }
+
+    const isOre = (simMap as { isOre: (x: number, y: number) => boolean }).isOre;
+    let minerPosition: { x: number; y: number } | null = null;
+
+    for (let y = 0; y < 12 && minerPosition === null; y += 1) {
+      for (let x = 0; x < 10 && minerPosition === null; x += 1) {
+        if (isOre(x, y) && isOre(x + 1, y)) {
+          minerPosition = { x, y };
+        }
+      }
+    }
+
+    if (minerPosition === null) {
+      throw new Error("Unable to find two horizontally-adjacent ore tiles in test map");
+    }
+
+    const minerId = sim.addEntity({
+      kind: "miner",
+      pos: minerPosition,
+      rot: "E",
+    } as Parameters<typeof sim.addEntity>[0]);
+    const beltId = sim.addEntity({
+      kind: "belt",
+      pos: { x: minerPosition.x + 1, y: minerPosition.y },
+      rot: "E",
+    } as Parameters<typeof sim.addEntity>[0]);
+
+    const belt = sim.getEntityById(beltId);
+    if (belt === undefined || belt.state === undefined) {
+      throw new Error("Expected belt state after creation");
+    }
+    (belt.state as { item?: unknown }).item = "iron-ore";
+
+    const power = (sim as { getPowerState?: () => { storage: number; demandThisTick: number; consumedThisTick: number } }).getPowerState?.();
+    if (power === undefined) {
+      throw new Error("Expected power state API");
+    }
+
+    const beforeStorage = power.storage;
+    const beforeConsumed = power.consumedThisTick;
+    const beforeDemand = power.demandThisTick;
+
+    sim.step((1000 / 60) * 60);
+
+    const after = (sim as { getPowerState?: () => { storage: number; demandThisTick: number; consumedThisTick: number } }).getPowerState?.();
+    if (after === undefined) {
+      throw new Error("Expected power state API after stepping");
+    }
+
+    expect(after.storage).toBe(beforeStorage);
+    expect(after.demandThisTick).toBe(beforeDemand);
+    expect(after.consumedThisTick).toBe(beforeConsumed);
+
+    const miner = sim.getEntityById(minerId);
+    if (miner?.state === undefined) {
+      throw new Error("Expected miner state");
+    }
+
+    const minerState = miner.state as { output?: unknown; hasOutput?: unknown };
+    expect(minerState.hasOutput).toBe(false);
+    expect(belt.state).toBeDefined();
+    expect((belt.state as { item?: unknown }).item).toBe("iron-ore");
+  });
+
+  test("miner extracts coal when mined from coal ore tile", () => {
+    const sim = createSim({
+      width: 12,
+      height: 12,
+      seed: 404,
+      restore: {
+        power: {
+          storage: 0,
+          capacity: 240,
+        },
+      },
+    });
+
+    const simMap = (sim as { getMap?: () => unknown }).getMap?.();
+    if (
+      typeof simMap !== "object" ||
+      simMap === null ||
+      typeof (simMap as { isOre?: unknown; isCoal?: unknown }).isOre !== "function" ||
+      typeof (simMap as { isCoal?: unknown }).isCoal !== "function"
+    ) {
+      throw new Error("Expected generated map with ore and coal access");
+    }
+
+    const { isOre, isCoal } = simMap as { isOre: (x: number, y: number) => boolean; isCoal: (x: number, y: number) => boolean };
+    let minerPosition: { x: number; y: number } | null = null;
+
+    for (let y = 0; y < 12 && minerPosition === null; y += 1) {
+      for (let x = 0; x < 11 && minerPosition === null; x += 1) {
+        if (!isCoal(x, y) || isOre(x + 1, y)) {
+          continue;
+        }
+
+        minerPosition = { x, y };
+      }
+    }
+
+    if (minerPosition === null) {
+      throw new Error("Unable to find suitable coal tile for test");
+    }
+
+    const panelPos = minerPosition.y > 0 ? { x: minerPosition.x, y: minerPosition.y - 1 } : { x: minerPosition.x, y: minerPosition.y + 1 };
+    sim.addEntity({
+      kind: "solar-panel",
+      pos: panelPos,
+      rot: "S",
+    } as Parameters<typeof sim.addEntity>[0]);
+
+    const minerId = sim.addEntity({
+      kind: "miner",
+      pos: minerPosition,
+      rot: "E",
+    } as Parameters<typeof sim.addEntity>[0]);
+    const beltId = sim.addEntity({
+      kind: "belt",
+      pos: { x: minerPosition.x + 1, y: minerPosition.y },
+      rot: "E",
+    } as Parameters<typeof sim.addEntity>[0]);
+
+    sim.step((1000 / 60) * 60);
+
+    const belt = sim.getEntityById(beltId);
+    const miner = sim.getEntityById(minerId);
+    if (belt?.state === undefined) {
+      throw new Error("Expected belt state after stepping");
+    }
+    if (miner?.state === undefined) {
+      throw new Error("Expected miner state after stepping");
+    }
+
+    expect((belt.state as { item?: unknown }).item).toBe("coal");
+    expect((miner.state as { hasOutput?: unknown }).hasOutput).toBe(false);
+  });
+
+  test("does not consume power for blocked inserter drops", () => {
+    const sim = createSim({ width: 12, height: 12, seed: 321 });
+    const inserterId = sim.addEntity({
+      kind: "inserter",
+      pos: { x: 4, y: 3 },
+      rot: "E",
+    } as Parameters<typeof sim.addEntity>[0]);
+    const beltId = sim.addEntity({
+      kind: "belt",
+      pos: { x: 5, y: 3 },
+      rot: "E",
+    } as Parameters<typeof sim.addEntity>[0]);
+
+    const inserter = sim.getEntityById(inserterId);
+    const belt = sim.getEntityById(beltId);
+    if (inserter === undefined || belt === undefined) {
+      throw new Error("Expected entities to exist");
+    }
+
+    const insertState = inserter.state as { holding?: unknown; tickPhase?: unknown };
+    if (insertState === undefined) {
+      throw new Error("Expected inserter state");
+    }
+    insertState.holding = "iron-ore";
+    insertState.tickPhase = 19;
+    (belt.state as { item?: unknown }).item = "iron-plate";
+
+    const powerBefore = (sim as { getPowerState?: () => { demandThisTick: number; consumedThisTick: number } }).getPowerState?.();
+    if (powerBefore === undefined) {
+      throw new Error("Expected power state API");
+    }
+
+    const beforeDemand = powerBefore.demandThisTick;
+    const beforeConsumed = powerBefore.consumedThisTick;
+
+    sim.step((1000 / 60) * 20);
+
+    const powerAfter = (sim as { getPowerState?: () => { demandThisTick: number; consumedThisTick: number } }).getPowerState?.();
+    if (powerAfter === undefined) {
+      throw new Error("Expected power state API after stepping");
+    }
+
+    expect(powerAfter.demandThisTick).toBe(beforeDemand);
+    expect(powerAfter.consumedThisTick).toBe(beforeConsumed);
+    expect(insertState.holding).toBe("iron-ore");
+    expect((belt.state as { item?: unknown }).item).toBe("iron-plate");
+  });
+
+  test("generates power each tick from solar-panel entities", () => {
+    const sim = createSim({ width: 8, height: 8, seed: 777 });
+    sim.addEntity({
+      kind: "solar-panel",
+      pos: { x: 3, y: 3 },
+      rot: "N",
+    } as Parameters<typeof sim.addEntity>[0]);
+
+    const before = (sim as { getPowerState?: () => { storage: number; generatedThisTick: number; demandThisTick: number; consumedThisTick: number } }).getPowerState?.();
+    if (before === undefined) {
+      throw new Error("Expected power state API");
+    }
+
+    const beforeStorage = before.storage;
+    sim.step((1000 / 60) * 10);
+
+    const after = (sim as { getPowerState?: () => { storage: number; generatedThisTick: number } }).getPowerState?.();
+    if (after === undefined) {
+      throw new Error("Expected power state API after stepping");
+    }
+
+    expect(after.generatedThisTick).toBeGreaterThan(0);
+    expect(after.storage).toBeGreaterThan(beforeStorage);
+  });
+
+  test("tracks power demand and shortage by kind", () => {
+    const sim = createSim({
+      width: 12,
+      height: 12,
+      seed: 999,
+      restore: {
+        power: {
+          storage: 0,
+          capacity: 120,
+        },
+      },
+    });
+    const simMap = (sim as { getMap?: () => unknown }).getMap?.();
+    if (typeof simMap !== "object" || simMap === null || typeof (simMap as { isOre?: unknown }).isOre !== "function") {
+      throw new Error("Expected generated map with ore access");
+    }
+
+    const isOre = (simMap as { isOre: (x: number, y: number) => boolean }).isOre;
+    let minerPosition: { x: number; y: number } | null = null;
+
+    for (let y = 0; y < 12 && minerPosition === null; y += 1) {
+      for (let x = 0; x < 11 && minerPosition === null; x += 1) {
+        if (!isOre(x, y) || !isOre(x + 1, y)) {
+          continue;
+        }
+
+        minerPosition = { x, y };
+      }
+    }
+
+    if (minerPosition === null) {
+      throw new Error("Unable to find mining tile with outbound target");
+    }
+
+    sim.addEntity({
+      kind: "miner",
+      pos: minerPosition,
+      rot: "E",
+    } as Parameters<typeof sim.addEntity>[0]);
+    sim.addEntity({
+      kind: "belt",
+      pos: { x: minerPosition.x + 1, y: minerPosition.y },
+      rot: "E",
+    } as Parameters<typeof sim.addEntity>[0]);
+
+    const powerBefore = (
+      sim as {
+        getPowerState?: () => {
+          storage: number;
+          demandThisTick: number;
+          consumedThisTick: number;
+          shortagesThisTick: number;
+          demandByKind?: Record<string, number>;
+          consumedByKind?: Record<string, number>;
+        };
+      }
+    ).getPowerState?.();
+    if (powerBefore === undefined) {
+      throw new Error("Expected power state API");
+    }
+
+    sim.step((1000 / 60) * 60);
+
+    const powerAfter = (
+      sim as {
+        getPowerState?: () => {
+          storage: number;
+          demandThisTick: number;
+          consumedThisTick: number;
+          shortagesThisTick: number;
+          demandByKind: Record<string, number>;
+          consumedByKind: Record<string, number>;
+          generatedByKind: Record<string, number>;
+        };
+      }
+    ).getPowerState?.();
+    if (powerAfter === undefined) {
+      throw new Error("Expected power state API after stepping");
+    }
+
+    expect(powerAfter.shortagesThisTick).toBeGreaterThan(0);
+    expect(powerAfter.demandThisTick).toBeGreaterThan(powerBefore.demandThisTick);
+    expect(powerAfter.consumedThisTick).toBe(powerBefore.consumedThisTick);
+    expect(powerAfter.demandByKind?.miner).toBeGreaterThan(0);
+    expect(powerAfter.consumedByKind?.miner ?? 0).toBe(0);
+  });
+
+  test("tracks generated power buckets by kind from solar panels", () => {
+    const sim = createSim({ width: 8, height: 8, seed: 777 });
+    sim.addEntity({
+      kind: "solar-panel",
+      pos: { x: 3, y: 3 },
+      rot: "N",
+    } as Parameters<typeof sim.addEntity>[0]);
+
+    sim.step((1000 / 60) * 10);
+
+    const after = (sim as { getPowerState?: () => { generatedByKind?: Record<string, number>; generatedThisTick: number } }).getPowerState?.();
+    if (after === undefined) {
+      throw new Error("Expected power state API after stepping");
+    }
+
+    expect(after.generatedThisTick).toBeGreaterThan(0);
+    expect(after.generatedByKind?.["solar-panel"]).toBeGreaterThan(0);
+    expect(after.generatedByKind?.["solar-panel"]).toBe(after.generatedThisTick);
+  });
+
+  test("consumer powers fail when disconnected from a power producer", () => {
+    const sim = createSim({
+      width: 12,
+      height: 12,
+      seed: 404,
+      restore: {
+        power: {
+          storage: 0,
+          capacity: 120,
+        },
+      },
+    });
+
+    const simMap = (sim as { getMap?: () => unknown }).getMap?.();
+    if (typeof simMap !== "object" || simMap === null || typeof (simMap as { isOre?: unknown }).isOre !== "function") {
+      throw new Error("Expected generated map with ore access");
+    }
+
+    const isOre = (simMap as { isOre: (x: number, y: number) => boolean }).isOre;
+    let minerPosition: { x: number; y: number } | null = null;
+    for (let y = 0; y < 12 && minerPosition === null; y += 1) {
+      for (let x = 0; x < 11 && minerPosition === null; x += 1) {
+        if (!isOre(x, y)) {
+          continue;
+        }
+
+        const outputX = x + 1;
+        if (outputX >= 12 || isOre(outputX, y)) {
+          continue;
+        }
+
+        minerPosition = { x, y };
+      }
+    }
+
+    if (minerPosition === null) {
+      throw new Error("Unable to find suitable miner placement tile");
+    }
+
+    const miner = sim.addEntity({
+      kind: "miner",
+      pos: minerPosition,
+      rot: "E",
+    } as Parameters<typeof sim.addEntity>[0]);
+
+    sim.addEntity({
+      kind: "belt",
+      pos: { x: minerPosition.x + 1, y: minerPosition.y },
+      rot: "E",
+    } as Parameters<typeof sim.addEntity>[0]);
+
+    const before = (
+      sim as {
+        getPowerState?: () => {
+          storage: number;
+          networkConsumers: number;
+          networkConnectedConsumers: number;
+          networkDisconnectedConsumers: number;
+          demandByKind: Record<string, number>;
+          consumedByKind: Record<string, number>;
+          shortagesThisTick: number;
+        };
+      }
+    ).getPowerState?.();
+    if (before === undefined) {
+      throw new Error("Expected power state API");
+    }
+
+    sim.step((1000 / 60) * 60);
+
+    const after = (
+      sim as {
+        getPowerState?: () => {
+          storage: number;
+          demandThisTick: number;
+          consumedThisTick: number;
+          networkProducers: number;
+          networkConsumers: number;
+          networkConnectedConsumers: number;
+          networkDisconnectedConsumers: number;
+          demandByKind: Record<string, number>;
+          consumedByKind: Record<string, number>;
+          shortagesThisTick: number;
+        };
+      }
+    ).getPowerState?.();
+    if (after === undefined) {
+      throw new Error("Expected power state API after stepping");
+    }
+
+    expect(after.networkProducers).toBe(0);
+    expect(after.networkConsumers).toBe(2);
+    expect(after.networkConnectedConsumers).toBe(0);
+    expect(after.networkDisconnectedConsumers).toBe(2);
+    expect(after.demandThisTick).toBeGreaterThan(before.demandThisTick);
+    expect(after.demandByKind.miner).toBeGreaterThan(0);
+    expect(after.consumedByKind?.miner ?? 0).toBe(0);
+    expect(after.consumedThisTick).toBe(0);
+    expect(after.shortagesThisTick).toBeGreaterThan(0);
+
+    const minerEntity = sim.getEntityById(miner);
+    if (minerEntity?.state === undefined) {
+      throw new Error("Expected miner entity");
+    }
+
+    expect((minerEntity.state as { hasOutput?: unknown }).hasOutput).toBe(false);
+  });
+
+  test("connected consumers consume power while disconnected consumers do not", () => {
+    const sim = createSim({
+      width: 12,
+      height: 12,
+      seed: 404,
+      restore: {
+        power: {
+          storage: 0,
+          capacity: 120,
+        },
+      },
+    });
+
+    const simMap = (sim as { getMap?: () => unknown }).getMap?.();
+    if (typeof simMap !== "object" || simMap === null || typeof (simMap as { isOre?: unknown }).isOre !== "function") {
+      throw new Error("Expected generated map with ore access");
+    }
+
+    const isOre = (simMap as { isOre: (x: number, y: number) => boolean }).isOre;
+    const firstMiner = { x: null as number | null, y: null as number | null, outputX: null as number | null };
+    const secondMiner = { x: null as number | null, y: null as number | null, outputX: null as number | null };
+    const width = 12;
+    const height = 12;
+
+    for (let y = 0; y < height && firstMiner.x === null; y += 1) {
+      for (let x = 0; x < width - 1 && firstMiner.x === null; x += 1) {
+        const outputX = x + 1;
+        if (isOre(x, y) && !isOre(outputX, y)) {
+          firstMiner.x = x;
+          firstMiner.y = y;
+          firstMiner.outputX = outputX;
+        }
+      }
+    }
+
+    if (firstMiner.x === null || firstMiner.y === null || firstMiner.outputX === null) {
+      throw new Error("Unable to find first miner placement tile");
+    }
+
+    const secondStartX = width - 3;
+    for (let y = 0; y < height && secondMiner.x === null; y += 1) {
+      for (let x = 1; x < secondStartX; x += 1) {
+        const outputX = x + 1;
+        if (x === firstMiner.x || outputX === firstMiner.outputX) {
+          continue;
+        }
+
+        if (isOre(x, y) && !isOre(outputX, y)) {
+          secondMiner.x = x;
+          secondMiner.y = y;
+          secondMiner.outputX = outputX;
+        }
+      }
+    }
+
+    if (secondMiner.x === null || secondMiner.y === null || secondMiner.outputX === null) {
+      throw new Error("Unable to find second miner placement tile");
+    }
+
+    const panelTile = firstMiner.y > 0 ? { x: firstMiner.x, y: firstMiner.y - 1 } : { x: firstMiner.x, y: firstMiner.y + 1 };
+    if (panelTile.y < 0 || panelTile.y >= height) {
+      throw new Error("Unable to place panel on map while keeping miner connected");
+    }
+
+    sim.addEntity({
+      kind: "solar-panel",
+      pos: panelTile,
+      rot: "S",
+    } as Parameters<typeof sim.addEntity>[0]);
+
+    sim.addEntity({
+      kind: "miner",
+      pos: { x: firstMiner.x, y: firstMiner.y },
+      rot: "E",
+    } as Parameters<typeof sim.addEntity>[0]);
+
+    sim.addEntity({
+      kind: "miner",
+      pos: { x: secondMiner.x, y: secondMiner.y },
+      rot: "E",
+    } as Parameters<typeof sim.addEntity>[0]);
+
+    sim.step((1000 / 60) * 1);
+    const before = (
+      sim as {
+        getPowerState?: () => {
+          networkProducers: number;
+          networkConsumers: number;
+          networkConnectedConsumers: number;
+          networkDisconnectedConsumers: number;
+          shortagesThisTick: number;
+        };
+      }
+    ).getPowerState?.();
+    if (before === undefined) {
+      throw new Error("Expected power state API");
+    }
+    expect(before.networkProducers).toBe(1);
+    expect(before.networkConsumers).toBe(2);
+    expect(before.networkConnectedConsumers).toBe(1);
+    expect(before.networkDisconnectedConsumers).toBe(1);
+
+    sim.step((1000 / 60) * 60);
+
+    const after = (
+      sim as {
+        getPowerState?: () => {
+          networkProducers: number;
+          networkConsumers: number;
+          networkConnectedConsumers: number;
+          networkDisconnectedConsumers: number;
+          demandByKind: Record<string, number>;
+          consumedByKind: Record<string, number>;
+          demandThisTick: number;
+          consumedThisTick: number;
+          shortagesThisTick: number;
+        };
+      }
+    ).getPowerState?.();
+    if (after === undefined) {
+      throw new Error("Expected power state API after stepping");
+    }
+
+    expect(after.networkProducers).toBe(1);
+    expect(after.networkConsumers).toBe(2);
+    expect(after.networkConnectedConsumers).toBe(1);
+    expect(after.networkDisconnectedConsumers).toBe(1);
+    expect(after.consumedByKind?.miner).toBe(2);
+    expect(after.consumedThisTick).toBe(2);
+    expect(after.demandByKind.miner).toBe(4);
+    expect(after.demandThisTick).toBe(4);
+    expect(after.shortagesThisTick).toBe(2);
+  });
+
+  test("network connectivity updates as producers are added", () => {
+    const sim = createSim({
+      width: 10,
+      height: 10,
+      seed: 404,
+      restore: {
+        power: {
+          storage: 0,
+          capacity: 120,
+        },
+      },
+    });
+
+    const map = (sim as { getMap?: () => unknown }).getMap?.();
+    if (typeof map !== "object" || map === null || typeof (map as { isOre?: unknown }).isOre !== "function") {
+      throw new Error("Expected generated map with ore access");
+    }
+
+    const isOre = (map as { isOre: (x: number, y: number) => boolean }).isOre;
+    let minerPos: { x: number; y: number } | null = null;
+    for (let y = 0; y < 10 && minerPos === null; y += 1) {
+    for (let x = 0; x < 8 && minerPos === null; x += 1) {
+        if (isOre(x, y) && !isOre(x + 1, y)) {
+          minerPos = { x, y };
+        }
+      }
+    }
+
+    if (minerPos === null) {
+      throw new Error("Unable to find suitable miner placement tile");
+    }
+
+    sim.addEntity({
+      kind: "miner",
+      pos: minerPos,
+      rot: "E",
+    } as Parameters<typeof sim.addEntity>[0]);
+
+    sim.step((1000 / 60) * 1);
+    const before = (
+      sim as {
+        getPowerState?: () => {
+          networkProducers: number;
+          networkConsumers: number;
+          networkDisconnectedConsumers: number;
+        };
+      }
+    ).getPowerState?.();
+    if (before === undefined) {
+      throw new Error("Expected power state API");
+    }
+
+    expect(before.networkProducers).toBe(0);
+    expect(before.networkConsumers).toBe(1);
+    expect(before.networkDisconnectedConsumers).toBe(1);
+
+    sim.addEntity({
+      kind: "solar-panel",
+      pos: { x: minerPos.x + 2, y: minerPos.y },
+      rot: "W",
+    } as Parameters<typeof sim.addEntity>[0]);
+
+    sim.step((1000 / 60) * 1);
+
+    const mid = (
+      sim as {
+        getPowerState?: () => {
+          networkProducers: number;
+          networkConsumers: number;
+          networkConnectedConsumers: number;
+          networkDisconnectedConsumers: number;
+        };
+      }
+    ).getPowerState?.();
+    if (mid === undefined) {
+      throw new Error("Expected power state API");
+    }
+
+    expect(mid.networkProducers).toBe(1);
+    expect(mid.networkConsumers).toBe(1);
+    expect(mid.networkConnectedConsumers).toBe(0);
+    expect(mid.networkDisconnectedConsumers).toBe(1);
+
+    const chainPanel = { x: minerPos.x + 1, y: minerPos.y };
+    const existingChainNodes = sim.getEntitiesAt(chainPanel);
+    if (existingChainNodes[0] !== undefined) {
+      sim.removeEntity(existingChainNodes[0].id);
+    }
+    sim.addEntity({
+      kind: "splitter",
+      pos: chainPanel,
+      rot: "N",
+    } as Parameters<typeof sim.addEntity>[0]);
+
+    sim.step((1000 / 60) * 1);
+    const after = (
+      sim as {
+        getPowerState?: () => {
+          networkProducers: number;
+          networkConsumers: number;
+          networkConnectedConsumers: number;
+          networkDisconnectedConsumers: number;
+        };
+      }
+    ).getPowerState?.();
+    if (after === undefined) {
+      throw new Error("Expected power state API after adding consumer");
+    }
+
+    expect(after.networkProducers).toBe(1);
+    expect(after.networkConsumers).toBe(2);
+    expect(after.networkConnectedConsumers).toBe(1);
+    expect(after.networkDisconnectedConsumers).toBe(1);
+  });
+
+  test("power network is recalculated each tick with new power node geometry", () => {
+    const sim = createSim({
+      width: 10,
+      height: 10,
+      seed: 404,
+      restore: {
+        power: {
+          storage: 0,
+          capacity: 120,
+        },
+      },
+    });
+
+    const simMap = (sim as { getMap?: () => unknown }).getMap?.();
+    if (typeof simMap !== "object" || simMap === null || typeof (simMap as { isOre?: unknown }).isOre !== "function") {
+      throw new Error("Expected generated map with ore access");
+    }
+
+    const isOre = (simMap as { isOre: (x: number, y: number) => boolean }).isOre;
+    let minerX = -1;
+    let minerY = -1;
+    for (let y = 0; y < 10 && minerY < 0; y += 1) {
+    for (let x = 0; x < 7 && minerY < 0; x += 1) {
+        if (isOre(x, y) && !isOre(x + 1, y)) {
+          minerX = x;
+          minerY = y;
+        }
+      }
+    }
+
+    if (minerX < 0 || minerY < 0) {
+      throw new Error("Unable to find suitable miner tile");
+    }
+
+    sim.addEntity({
+      kind: "miner",
+      pos: { x: minerX, y: minerY },
+      rot: "E",
+    } as Parameters<typeof sim.addEntity>[0]);
+
+    sim.addEntity({
+      kind: "solar-panel",
+      pos: { x: minerX + 1, y: minerY },
+      rot: "W",
+    } as Parameters<typeof sim.addEntity>[0]);
+
+    sim.step((1000 / 60) * 5);
+
+    const mid = (
+      sim as {
+        getPowerState?: () => {
+          networkProducers: number;
+          networkConsumers: number;
+          networkConnectedConsumers: number;
+          networkDisconnectedConsumers: number;
+        };
+      }
+    ).getPowerState?.();
+    if (mid === undefined) {
+      throw new Error("Expected power state API");
+    }
+    expect(mid.networkProducers).toBe(1);
+    expect(mid.networkConsumers).toBe(1);
+    expect(mid.networkConnectedConsumers).toBe(1);
+    expect(mid.networkDisconnectedConsumers).toBe(0);
+
+    const removablePanels = sim.getEntitiesAt({ x: minerX + 1, y: minerY });
+    if (removablePanels[0] === undefined) {
+      throw new Error("Expected removable panel at existing tile");
+    }
+    sim.removeEntity(removablePanels[0].id);
+    sim.addEntity({
+      kind: "solar-panel",
+      pos: { x: minerX + 3, y: minerY },
+      rot: "W",
+    } as Parameters<typeof sim.addEntity>[0]);
+
+    sim.step((1000 / 60) * 5);
+    const after = (
+      sim as {
+        getPowerState?: () => {
+          networkProducers: number;
+          networkConsumers: number;
+          networkConnectedConsumers: number;
+          networkDisconnectedConsumers: number;
+        };
+      }
+    ).getPowerState?.();
+    if (after === undefined) {
+      throw new Error("Expected power state API after movement");
+    }
+
+    expect(after.networkProducers).toBe(1);
+    expect(after.networkConsumers).toBe(1);
+    expect(after.networkConnectedConsumers).toBe(0);
+    expect(after.networkDisconnectedConsumers).toBe(1);
+  });
+
+  test("preserves belt item filters across restore payloads", () => {
+    const sim = createSim({
+      width: 6,
+      height: 3,
+      seed: 999,
+      restore: {
+        tick: 5,
+        tickCount: 5,
+        elapsedMs: 0,
+        entities: [
+          {
+            kind: "belt",
+            pos: { x: 1, y: 1 },
+            rot: "E",
+            state: {
+              item: "iron-plate",
+              accept: "iron-plate",
+              tickPhase: 5,
+            },
+          },
+          {
+            kind: "belt",
+            pos: { x: 2, y: 1 },
+            rot: "E",
+            state: {
+              items: [null, null, null, null],
+            },
+          },
+        ],
+      },
+    });
+
+    const source = sim.getEntitiesAt({ x: 1, y: 1 })[0];
+    const target = sim.getEntitiesAt({ x: 2, y: 1 })[0];
+    if (source?.state === undefined || target?.state === undefined) {
+      throw new Error("Expected restored belt states to include state payload");
+    }
+
+    const sourceState = source.state as { accept?: unknown; item?: unknown };
+    const targetState = target.state as { item?: unknown };
+    expect(sourceState.accept).toBe("iron-plate");
+    expect(sourceState.item).toBe("iron-plate");
+
+    sim.step((1000 / 60) * 10);
+
+    expect(sourceState.item).toBeNull();
+    expect(targetState.item).toBe("iron-plate");
+  });
 });

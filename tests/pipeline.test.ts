@@ -106,6 +106,18 @@ type CanonicalBeltState = {
   buffer: ItemKind | null;
 };
 
+type FilterableBeltState = CanonicalBeltState & {
+  accept: ItemKind | null;
+};
+
+type SplitterState = {
+  tickPhase: number;
+  item: ItemKind | null;
+  buffer?: ItemKind | null;
+  items?: (ItemKind | null)[];
+  nextOutputIndex: 0 | 1;
+};
+
 type CanonicalInserterState = {
   tickPhase: number;
   holding: ItemKind | null;
@@ -390,6 +402,60 @@ const runSharedTargetBeltRace = (): SharedTargetRaceState => {
     sourceSouth: { ...southSource },
     sharedTarget: { ...sharedTarget },
   };
+};
+
+const runSplitterRoundRobinScenario = (): {
+  sim: ReturnType<typeof createSim>;
+  source: BeltCellState;
+  splitter: SplitterState;
+  northOutput: BeltCellState;
+  southOutput: BeltCellState;
+} => {
+  const sim = createSim({ width: 7, height: 7, seed: 1101 });
+
+  const sourceId = sim.addEntity({ kind: TEST_BELT_KIND, pos: { x: 2, y: 3 }, rot: 'E' });
+  const splitterId = sim.addEntity({ kind: 'splitter', pos: { x: 3, y: 3 }, rot: 'E' });
+  const northOutputId = sim.addEntity({ kind: TEST_BELT_KIND, pos: { x: 3, y: 2 }, rot: 'E' });
+  const southOutputId = sim.addEntity({ kind: TEST_BELT_KIND, pos: { x: 3, y: 4 }, rot: 'E' });
+
+  const source = getState<BeltCellState>(sim, sourceId);
+  const splitter = getState<SplitterState>(sim, splitterId);
+  const northOutput = getState<BeltCellState>(sim, northOutputId);
+  const southOutput = getState<BeltCellState>(sim, southOutputId);
+
+  source.item = 'iron-ore';
+
+  return { sim, source, splitter, northOutput, southOutput };
+};
+
+const runSplitterDirectionalInputScenario = (): {
+  sim: ReturnType<typeof createSim>;
+  splitter: SplitterState;
+  sourceWest: BeltCellState;
+  sourceNorth: BeltCellState;
+  sourceSouth: BeltCellState;
+  sourceEast: BeltCellState;
+} => {
+  const sim = createSim({ width: 7, height: 7, seed: 1102 });
+
+  const splitterId = sim.addEntity({ kind: 'splitter', pos: { x: 3, y: 3 }, rot: 'E' });
+  const sourceWestId = sim.addEntity({ kind: TEST_BELT_KIND, pos: { x: 2, y: 3 }, rot: 'E' });
+  const sourceNorthId = sim.addEntity({ kind: TEST_BELT_KIND, pos: { x: 3, y: 2 }, rot: 'S' });
+  const sourceSouthId = sim.addEntity({ kind: TEST_BELT_KIND, pos: { x: 3, y: 4 }, rot: 'N' });
+  const sourceEastId = sim.addEntity({ kind: TEST_BELT_KIND, pos: { x: 4, y: 3 }, rot: 'W' });
+
+  const splitter = getState<SplitterState>(sim, splitterId);
+  const sourceWest = getState<BeltCellState>(sim, sourceWestId);
+  const sourceNorth = getState<BeltCellState>(sim, sourceNorthId);
+  const sourceSouth = getState<BeltCellState>(sim, sourceSouthId);
+  const sourceEast = getState<BeltCellState>(sim, sourceEastId);
+
+  sourceWest.item = 'iron-ore';
+  sourceNorth.item = 'iron-plate';
+  sourceSouth.item = 'coal';
+  sourceEast.item = 'iron-ore';
+
+  return { sim, splitter, sourceWest, sourceNorth, sourceSouth, sourceEast };
 };
 
 const setupCustomInserterTransferScenario = (
@@ -1383,6 +1449,47 @@ describe('Transport cadence regressions', () => {
     expect(target).toMatchObject({ tickPhase: 15, item: 'iron-ore' });
   });
 
+  it('applies per-belt item filters to canonical transfers', () => {
+    const sim = createSim({ width: 8, height: 3, seed: 915 });
+
+    const sourceId = sim.addEntity({ kind: 'belt', pos: { x: 1, y: 1 }, rot: 'E' });
+    const targetId = sim.addEntity({ kind: 'belt', pos: { x: 2, y: 1 }, rot: 'E' });
+
+    const source = getState<FilterableBeltState>(sim, sourceId);
+    const target = getState<FilterableBeltState>(sim, targetId);
+
+    source.item = 'iron-ore';
+    target.accept = 'iron-plate';
+    stepTicks(sim, BELT_ATTEMPT_TICKS);
+
+    expect(sim.tickCount).toBe(15);
+    expect(source).toMatchObject({ tickPhase: 15, item: 'iron-ore' });
+    expect(target).toMatchObject({ tickPhase: 15, item: null, accept: 'iron-plate' });
+
+    target.accept = null;
+    stepTicks(sim, BELT_ATTEMPT_TICKS);
+
+    expect(sim.tickCount).toBe(30);
+    expect(source).toMatchObject({ tickPhase: 30, item: null });
+    expect(target).toMatchObject({ tickPhase: 30, item: 'iron-ore', accept: null });
+
+    target.item = null;
+    source.item = 'coal';
+    target.accept = 'iron-plate';
+    stepTicks(sim, BELT_ATTEMPT_TICKS);
+
+    expect(sim.tickCount).toBe(45);
+    expect(source).toMatchObject({ tickPhase: 45, item: 'coal' });
+    expect(target).toMatchObject({ tickPhase: 45, item: null, accept: 'iron-plate' });
+
+    target.accept = null;
+    stepTicks(sim, BELT_ATTEMPT_TICKS);
+
+    expect(sim.tickCount).toBe(60);
+    expect(source).toMatchObject({ tickPhase: 60, item: null });
+    expect(target).toMatchObject({ tickPhase: 60, item: 'coal', accept: null });
+  });
+
   it('runs canonical inserter transfer on 20-tick cadence without dup/drop across blocked drops', () => {
     const first = runCanonicalInserterBlockedCadenceScenario();
     const second = runCanonicalInserterBlockedCadenceScenario();
@@ -1417,5 +1524,70 @@ describe('Transport cadence regressions', () => {
       target: 'iron-ore',
       total: 2,
     });
+  });
+
+  it('alternates splitter output branches deterministically on each successful transfer', () => {
+    const { sim, source, splitter, northOutput, southOutput } = runSplitterRoundRobinScenario();
+
+    expect(splitter.nextOutputIndex).toBe(0);
+    expect(northOutput.item).toBeNull();
+    expect(southOutput.item).toBeNull();
+
+    stepTicks(sim, BELT_ATTEMPT_TICKS);
+    expect(sim.tickCount).toBe(15);
+    expect(splitter.item).toBe('iron-ore');
+    expect(source.item).toBeNull();
+
+    stepTicks(sim, BELT_ATTEMPT_TICKS);
+    expect(sim.tickCount).toBe(30);
+    expect(splitter.item).toBeNull();
+    expect(northOutput.item).toBe('iron-ore');
+    expect(southOutput.item).toBeNull();
+    expect(splitter.nextOutputIndex).toBe(1);
+
+    source.item = 'iron-plate';
+
+    stepTicks(sim, BELT_ATTEMPT_TICKS);
+    expect(sim.tickCount).toBe(45);
+    expect(splitter.item).toBe('iron-plate');
+    expect(source.item).toBeNull();
+
+    stepTicks(sim, BELT_ATTEMPT_TICKS);
+    expect(sim.tickCount).toBe(60);
+    expect(splitter.item).toBeNull();
+    expect(southOutput.item).toBe('iron-plate');
+    expect(northOutput.item).toBe('iron-ore');
+    expect(splitter.nextOutputIndex).toBe(0);
+  });
+
+  it('only accepts splitter inputs from the splitter-facing side', () => {
+    const {
+      sim,
+      splitter,
+      sourceWest,
+      sourceNorth,
+      sourceSouth,
+      sourceEast,
+    } = runSplitterDirectionalInputScenario();
+
+    expect(splitter.item).toBeNull();
+
+    stepTicks(sim, BELT_ATTEMPT_TICKS);
+    expect(sim.tickCount).toBe(15);
+    expect(splitter.item).toBe('iron-ore');
+    expect(sourceWest.item).toBeNull();
+    expect(sourceNorth.item).toBe('iron-plate');
+    expect(sourceSouth.item).toBe('coal');
+    expect(sourceEast.item).toBe('iron-ore');
+
+    sourceWest.item = 'iron-plate';
+
+    stepTicks(sim, BELT_ATTEMPT_TICKS);
+    expect(sim.tickCount).toBe(30);
+    expect(splitter.item).toBeNull();
+    expect(sourceWest.item).toBe('iron-plate');
+    expect(sourceNorth.item).toBe('iron-plate');
+    expect(sourceSouth.item).toBe('coal');
+    expect(sourceEast.item).toBe('iron-ore');
   });
 });
